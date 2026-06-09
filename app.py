@@ -24,7 +24,7 @@ st.title("🌐 NMA Data Extraction Tool (V4 PRO)")
 st.markdown("**지침:** 1개 Arm 단위로 데이터를 추출합니다. 모든 탭을 작성한 후 마지막에 Submit을 누르세요.")
 
 # 폼 시작 (이 안에 있는 모든 입력은 Submit을 눌러야만 전송됨)
-with st.form("extraction_form", clear_on_submit=True):
+with st.form("extraction_form", clear_on_submit=False):
     
     # 4개의 탭 생성
     tab1, tab2, tab3, tab4 = st.tabs(["📑 1. Study Info", "🛠️ 2. Intervention", "📈 3. Outcomes", "⚖️ 4. Risk of Bias"])
