@@ -14,7 +14,10 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 import math
-from scipy.stats import norm
+from statistics import NormalDist
+
+# stdlib replacement for scipy.stats.norm.ppf — avoids the scipy dependency
+_norm_ppf = NormalDist().inv_cdf
 
 st.set_page_config(page_title="Cognitive Aids NMA Extraction v4.1", layout="wide")
 
@@ -339,7 +342,7 @@ with st.form("extraction_form", clear_on_submit=False):
                     if cvt_method.startswith("Wan"):
                         # Wan 2014 scenario C2 (median + IQR + n)
                         mean_est = (cv_a + cv_med + cv_b) / 3
-                        xi = 2 * norm.ppf((0.75 * cv_n - 0.125) / (cv_n + 0.25))
+                        xi = 2 * _norm_ppf((0.75 * cv_n - 0.125) / (cv_n + 0.25))
                         sd_est = (cv_b - cv_a) / xi
                         method_used = f"Wan 2014 (η={xi:.3f})"
                     elif cvt_method.startswith("Hozo"):
@@ -360,7 +363,7 @@ with st.form("extraction_form", clear_on_submit=False):
                         w = 4 / (4 + cv_n ** 0.75)
                         mean_est = w * (cv_a + cv_b) / 2 + (1 - w) * cv_med
                         # use Wan SD as companion (Luo paper recommends pairing)
-                        xi = 2 * norm.ppf((0.75 * cv_n - 0.125) / (cv_n + 0.25))
+                        xi = 2 * _norm_ppf((0.75 * cv_n - 0.125) / (cv_n + 0.25))
                         sd_est = (cv_b - cv_a) / xi  # approximation
                         method_used = "Luo 2018 mean + Wan 2014 SD"
                     st.success(
