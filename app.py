@@ -570,14 +570,3 @@ with st.form("extraction_form", clear_on_submit=False):
                     )
                 except Exception as e:
                     st.error(f"❌ Could not write to sheet: {e}")
-
-# =============================================================================
-# Helper: show expected sheet headers (so user can paste them into row 1)
-# =============================================================================
-with st.expander("🔧 Setup — expected Google Sheet header row (paste into row 1)"):
-    st.markdown(
-        "Copy these into row 1 of your Google Sheet **in this exact order** "
-        "before first use:"
-    )
-    st.code("\t".join(SHEET_HEADERS), language="text")
-    st.caption(f"Total columns: {len(SHEET_HEADERS)}")
