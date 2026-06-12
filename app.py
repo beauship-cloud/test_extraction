@@ -13,8 +13,13 @@ import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import math
 from statistics import NormalDist
+
+# Project timezone — all submissions stamped in Montréal time (EDT/EST)
+# regardless of where the reviewer is located.
+TZ = ZoneInfo("America/Toronto")
 
 # stdlib replacement for scipy.stats.norm.ppf — avoids the scipy dependency
 _norm_ppf = NormalDist().inv_cdf
@@ -132,15 +137,28 @@ with st.form("extraction_form", clear_on_submit=False):
         with c2:
             country = st.text_input("Country")
             setting = st.selectbox(
-                "Simulation Setting",
+                "Simulated scenario setting",
                 ["OR / Anaesthesia", "ICU", "ED", "Neonatal / Paediatric",
                  "Pre-hospital / EMS", "Ward", "Other"],
+                help="Clinical context of the simulated emergency itself "
+                     "(NOT the training course context). E.g., an ICU-course "
+                     "simulating an in-hospital RRT call to ED → code as 'ED'.",
             )
             scenario = st.text_input("Scenario (e.g., MH, cardiac arrest, anaphylaxis)")
         with c3:
-            total_n = st.number_input("Total N (all arms)", min_value=0, value=0)
-            arm_n = st.number_input("★ N (this arm)", min_value=0, value=0,
-                                    help="NMA-critical: per-arm N")
+            total_n = st.number_input(
+                "Total N (all arms)", min_value=0, value=0,
+                help="Enter N at the UNIT OF ANALYSIS for the primary outcome. "
+                     "If unit-of-randomisation ≠ unit-of-analysis (e.g., teams "
+                     "randomised but process-steps analysed), state both in "
+                     "the Adherence comments field.",
+            )
+            arm_n = st.number_input(
+                "★ N (this arm)", min_value=0, value=0,
+                help="NMA-critical: per-arm N at the unit of analysis. "
+                     "For team-randomised studies analysed at process-step level, "
+                     "use the level that matches the Mean/SD or events/N reported.",
+            )
 
         st.markdown("---")
         st.subheader("Population & Team")
@@ -161,9 +179,14 @@ with st.form("extraction_form", clear_on_submit=False):
             )
             team_inter = st.selectbox(
                 "Team interprofessionality (NEW v4.1)",
-                ["Single-discipline", "Interprofessional",
+                ["Single-discipline",
+                 "Interdisciplinary (multi-specialty, same profession)",
+                 "Interprofessional (multi-profession: MD + RN + paramedic etc.)",
                  "Mixed across arms", "Individual (N/A)", "Unclear"],
-                help="Sharif (Apr mtg): distinct from individual/team unit-of-randomisation.",
+                help="Sharif (Apr mtg): captures team composition. "
+                     "Interdisciplinary = e.g., anaesthesia + IM + surgery residents (all MDs). "
+                     "Interprofessional = e.g., MD + RN + RT. "
+                     "Distinct from individual/team unit-of-randomisation.",
             )
 
     # -------------------------------------------------------------------------
@@ -214,8 +237,11 @@ with st.form("extraction_form", clear_on_submit=False):
              "Stepwise (sequential, one path)",
              "Branching (decision-tree, adapts to user input)",
              "Mixed",
+             "Unclear from main text (appendix / supplementary needed)",
              "N/A (Control)"],
-            help="Marshall 2016 and van Haperen explicitly compared linear vs branched.",
+            help="Marshall 2016 and van Haperen explicitly compared linear vs branched. "
+                 "If main text doesn't show enough of the CA to judge, code Unclear and "
+                 "flag in Implementation narrative — author contact or appendix lookup needed.",
         )
 
     # -------------------------------------------------------------------------
@@ -251,7 +277,12 @@ with st.form("extraction_form", clear_on_submit=False):
         with r1:
             reader_present = st.selectbox(
                 "Designated Reader present?",
-                ["Yes", "No", "Not reported"],
+                ["Yes — mandated role (protocol-defined)",
+                 "Yes — team's discretion (role exists but team decides who/whether)",
+                 "No",
+                 "Not reported"],
+                help="Sellmann-style studies where a reader role exists but "
+                     "allocation is 'up to the team' code as Yes-discretion, not Yes.",
             )
             reader_mode = st.selectbox(
                 "Reader use mode (NEW v4.1)",
@@ -302,7 +333,10 @@ with st.form("extraction_form", clear_on_submit=False):
         with e2:
             fidelity_rate = st.text_input(
                 "CA use fidelity rate (% participants who actually used CA, if reported)",
-                help="Leave blank if not reported."
+                help="Leave blank if not reported. "
+                     "Convention: 'wrong CA selected' counts as USED (denominator stays same, "
+                     "included in numerator). Report as % and add raw counts in the "
+                     "Implementation narrative — e.g., '53% (63/120 used, 5 wrong, 41 not-used)'."
             )
 
         implementation_narrative = st.text_area(
@@ -316,13 +350,30 @@ with st.form("extraction_form", clear_on_submit=False):
     # TAB 4 — OUTCOMES
     # -------------------------------------------------------------------------
     with tab4:
+        st.warning(
+            """
+**📌 Which outcome block does this study's primary result go in?**
+
+- **Adherence (continuous, Mean/SD)** — use when study reports a continuous score (e.g., adherence %, checklist score out of N).
+- **Error rate (dichotomous, events/N)** — use when study reports counts of failures (e.g., "X/Y critical steps missed", absolute/relative risk reduction).
+- **Both?** If the primary outcome is process-step failure rate (Sellmann, Arriaga-style), the study can go in EITHER block depending on how the numbers are reported.
+  - Has Mean failure rate per team + SD across teams → **Adherence**.
+  - Has events/N at process-step level (e.g., 413/960 steps failed) → **Error rate**.
+  - If both formats available, prefer Adherence (matches Protocol §8 primary).
+  - If only median + percentiles in a figure (Sellmann case), flag for author contact and leave Adherence Mean/SD blank.
+"""
+        )
+        st.markdown("---")
+
         # --------- Conversion calculator (Wan > Hozo > Luo) ----------
         with st.expander("💡 Median → Mean/SD Converter (Wan 2014 > Hozo 2005 > Luo 2018)",
                          expanded=False):
             st.markdown(
                 "**Hierarchy** (per Protocol v2): use **Wan 2014** when median + IQR (Q1, Q3) "
                 "reported; **Hozo 2005** when only median + range (min, max); **Luo 2018** "
-                "for skewed or very large samples. Record which method you used."
+                "for skewed or very large samples. Record which method you used. "
+                "**Not covered**: median + 5th/95th percentile (Sellmann case) — flag for "
+                "author contact in Adherence comments."
             )
             cvt_method = st.radio(
                 "Pick reported statistic:",
@@ -512,7 +563,7 @@ with st.form("extraction_form", clear_on_submit=False):
             st.error("❌ Lead Author is required.")
         else:
             row_data = [
-                str(datetime.now()), reviewer,
+                datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %Z"), reviewer,
                 # Study info
                 author, str(year), study_type, country, setting, scenario,
                 # Population
