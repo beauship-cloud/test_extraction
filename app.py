@@ -1,28 +1,38 @@
 """
-Cognitive Aids NMA — Data Extraction Tool (v4.5)
-Streamlit app matching extraction form v4.5.
+Cognitive Aids NMA — Data Extraction Tool (v4.6)
+Streamlit app matching extraction form v4.6.
 Deploy: GitHub → Streamlit Community Cloud.
 
 Requires:
   - st.secrets["gcp_service_account"] : service-account JSON
   - Google Sheet with header row matching SHEET_HEADERS below
 
-v4.5 changelog (Jun 2026):
-  - Removed Clear ALL / Clear arm-specific buttons. Streamlit form caching
-    made these unreliable, and F5 (browser refresh) is the simpler, more
-    predictable reset path. Saves complexity, focuses on save reliability.
-  - Workflow returns to: F5 = fresh study; manually edit fields between
-    arms of the same study (the pilot workflow that already worked).
-  - MERSQI calculator: replaced single-total text input with 6 domain
-    selectboxes (Reed et al. 2007). Total is auto-computed and saved to
-    the existing "MERSQI total" column. No new columns — only the total
-    is stored; per-domain selections are not preserved across submits.
+v4.6 changelog (Jun 2026) — DATA INTEGRITY:
+  - 31 critical selectbox/radio widgets now require an explicit choice
+    (index=None + placeholder="— select —"). No more silent acceptance of
+    first-option defaults. Affects: study_type, setting, pub_type,
+    unit_random, exp_level, team_inter, nma_node, medium, ca_type,
+    ca_logic, pretrain_intensity, train_method, train_timing,
+    reader_present, interaction, strictness, enforcement, fidelity_check,
+    adh_direction, RoB-2 D1–D5, RoB-2 Overall, MERSQI 6 subscores.
+  - Submit validation expanded: any unselected critical field blocks
+    submit and is listed by name + tab in the error message.
+  - MERSQI auto-sum now handles incomplete state: shows "incomplete X/6"
+    warning until all 6 domains are selected; total is blanked instead
+    of computing from defaults.
+  - "Default value = silent data corruption" was the failure mode:
+    e.g. unanswered MERSQI would have been saved as 4.5/18 (sum of
+    first-option defaults), looking like a deliberate low-quality rating.
+
+v4.5 retained:
+  - MERSQI calculator (6 domain selectboxes auto-summing to total).
+  - Clear ALL / Clear arm-specific buttons removed (F5 = reset).
 
 v4.4 retained:
-  - enter_to_submit=False on the form (Enter no longer accidentally submits).
+  - enter_to_submit=False on the form.
   - +1 column: Coding uncertainty log (Tab 1 end).
   - Personal-name references removed from form text.
-  - Explicit `key=` on every widget (kept for Streamlit best practice).
+  - Explicit `key=` on every widget.
 
 v4.3 retained:
   - +3 columns: Publication type, Author contact status,
@@ -48,7 +58,7 @@ TZ = ZoneInfo("America/Toronto")
 # stdlib replacement for scipy.stats.norm.ppf — avoids the scipy dependency
 _norm_ppf = NormalDist().inv_cdf
 
-st.set_page_config(page_title="Cognitive Aids NMA Extraction v4.5", layout="wide")
+st.set_page_config(page_title="Cognitive Aids NMA Extraction v4.6", layout="wide")
 
 # =============================================================================
 # Google Sheets connection
@@ -123,7 +133,7 @@ SHEET_HEADERS = [
 # =============================================================================
 # UI
 # =============================================================================
-st.title("🌐 Cognitive Aids NMA — Data Extraction (v4.5)")
+st.title("🌐 Cognitive Aids NMA — Data Extraction (v4.6)")
 st.info(
     """
 **📌 INSTRUCTIONS**
@@ -164,7 +174,9 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 ["RCT", "Pilot RCT", "Cluster RCT", "Crossover RCT",
                  "Quasi-experimental", "Observational/Non-randomised", "Other"],
             
-                key="study_type",)
+                key="study_type",
+                index=None,
+                placeholder="— select —",)
         with c2:
             country = st.text_input("Country", key="country")
             setting = st.selectbox(
@@ -175,7 +187,9 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                      "(NOT the training course context). E.g., an ICU-course "
                      "simulating an in-hospital RRT call to ED → code as 'ED'.",
             
-                key="setting",)
+                key="setting",
+                index=None,
+                placeholder="— select —",)
             scenario = st.text_input("Scenario (e.g., MH, cardiac arrest, anaphylaxis)", key="scenario")
         with c3:
             total_n = st.number_input(
@@ -206,7 +220,9 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 help="Donze 2019 was published as a Letter — flag here so "
                      "RoB-2 D5 / MERSQI / sample-size scrutiny can be adjusted.",
             
-                key="pub_type",)
+                key="pub_type",
+                index=None,
+                placeholder="— select —",)
         with pm2:
             author_contact = st.selectbox(
                 "Author contact status (NEW v4.3)",
@@ -229,12 +245,16 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 ["Individual (single-provider)", "Team (multi-provider)",
                  "Cluster", "Unclear"],
             
-                key="unit_random",)
+                key="unit_random",
+                index=None,
+                placeholder="— select —",)
             exp_level = st.selectbox(
                 "★ Provider experience [for S4 sensitivity]",
                 ["Trainee", "Experienced", "Mixed", "Unclear"],
             
-                key="exp_level",)
+                key="exp_level",
+                index=None,
+                placeholder="— select —",)
         with p2:
             team_compo = st.text_input(
                 "Team composition (free text — e.g., 'surgeon + 2 nurses')"
@@ -251,7 +271,9 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                      "Interprofessional = e.g., MD + RN + RT. "
                      "Distinct from individual/team unit-of-randomisation.",
             
-                key="team_inter",)
+                key="team_inter",
+                index=None,
+                placeholder="— select —",)
 
         st.markdown("---")
         st.subheader("Coding uncertainty log (NEW v4.4)")
@@ -282,7 +304,9 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
         )
         n1, n2 = st.columns([1, 2])
         with n1:
-            nma_node = st.selectbox("★ NMA Node", ["Control", "Static", "Dynamic"], key="nma_node")
+            nma_node = st.selectbox("★ NMA Node", ["Control", "Static", "Dynamic"], key="nma_node",
+                index=None,
+                placeholder="— select —",)
             arm_no = st.number_input("★ Arm No.", 1, 10, 1, key="arm_no")
         with n2:
             node_rationale = st.text_area(
@@ -306,13 +330,17 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                  "Digital — AR/VR", "Hybrid (paper + digital)",
                  "N/A (Control arm)", "Other"],
             
-                key="medium",)
+                key="medium",
+                index=None,
+                placeholder="— select —",)
             ca_type = st.selectbox(
                 "Format — type",
                 ["Checklist", "Chart / flow diagram", "App", "Tablet interface",
                  "AR overlay", "Mnemonic / memory aid", "N/A (Control)", "Other"],
             
-                key="ca_type",)
+                key="ca_type",
+                index=None,
+                placeholder="— select —",)
 
         ca_logic = st.selectbox(
             "CA logic structure (NEW v4.1) — handoff §7 effect modifier",
@@ -326,7 +354,9 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                  "If main text doesn't show enough of the CA to judge, code Unclear and "
                  "flag in Implementation narrative — author contact or appendix lookup needed.",
         
-            key="ca_logic",)
+            key="ca_logic",
+            index=None,
+            placeholder="— select —",)
 
     # -------------------------------------------------------------------------
     # TAB 3 — IMPLEMENTATION FACTORS
@@ -339,7 +369,9 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 "Pre-training intensity",
                 ["None", "Minimal (<30 min)", "Structured (≥30 min)", "Unclear"],
             
-                key="pretrain_intensity",)
+                key="pretrain_intensity",
+                index=None,
+                placeholder="— select —",)
             train_duration = st.text_input(
                 "Training duration (free text — e.g., '15 min', '2 sessions of 1 h')"
             ,
@@ -350,13 +382,17 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 ["None", "Lecture", "Video", "Hands-on / orientation",
                  "Combined", "Unclear"],
             
-                key="train_method",)
+                key="train_method",
+                index=None,
+                placeholder="— select —",)
             train_timing = st.selectbox(
                 "Training timing",
                 ["None", "Immediately before scenario", "Same day",
                  "Earlier in study (remote)", "Unclear"],
             
-                key="train_timing",)
+                key="train_timing",
+                index=None,
+                placeholder="— select —",)
         pretrain_desc = st.text_area("Pre-training description (free text, if provided)", height=68, key="pretrain_desc")
 
         st.markdown("---")
@@ -372,7 +408,9 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 help="Sellmann-style studies where a reader role exists but "
                      "allocation is 'up to the team' code as Yes-discretion, not Yes.",
             
-                key="reader_present",)
+                key="reader_present",
+                index=None,
+                placeholder="— select —",)
             reader_mode = st.selectbox(
                 "Reader use mode (NEW v4.1)",
                 ["Mandated (required by protocol)",
@@ -393,7 +431,9 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 ["Read-do", "Challenge-response", "Self-read silent",
                  "Combined", "N/A (Control)", "Unclear"],
             
-                key="interaction",)
+                key="interaction",
+                index=None,
+                placeholder="— select —",)
             strictness = st.selectbox(
                 "Strictness of CA workflow (within the aid)",
                 ["Strict (every step must be completed)",
@@ -401,7 +441,9 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                  "Mixed", "N/A (Control)", "Unclear"],
                 help="If overlaps with CA use enforcement below, prioritise enforcement field.",
             
-                key="strictness",)
+                key="strictness",
+                index=None,
+                placeholder="— select —",)
 
         st.markdown("---")
         st.subheader("CA use enforcement & fidelity")
@@ -419,7 +461,9 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                  "Available-only (CA placed in environment, no instruction)",
                  "Unclear"],
             
-                key="enforcement",)
+                key="enforcement",
+                index=None,
+                placeholder="— select —",)
             fidelity_check = st.selectbox(
                 "CA use fidelity check (was actual use monitored?)",
                 ["Yes — quantitative (e.g., observed/timed use)",
@@ -430,7 +474,9 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 help="v4.3: 'Yes — ordinal scale' added for Bould-style fidelity "
                      "ratings (0–5 use scale) — distinct from raw observed counts.",
             
-                key="fidelity_check",)
+                key="fidelity_check",
+                index=None,
+                placeholder="— select —",)
         with e2:
             fidelity_rate = st.text_input(
                 "CA use fidelity rate (% participants who actually used CA, if reported)",
@@ -544,7 +590,9 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                  "errors per case), the SMD sign will be flipped at analysis. "
                  "Recording direction here removes guesswork at sign-alignment.",
         
-            key="adh_direction",)
+            key="adh_direction",
+            index=None,
+            placeholder="— select —",)
         o1c1, o1c2, o1c3 = st.columns(3)
         with o1c1: adh_mean = st.text_input("★ Mean", key="adh_mean")
         with o1c2: adh_sd = st.text_input("★ SD", key="adh_sd")
@@ -634,13 +682,25 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
         rob_levels = ["Low", "Some concerns", "High", "N/A (non-randomised)"]
         rc1, rc2 = st.columns(2)
         with rc1:
-            d1 = st.selectbox("D1 — Randomisation process", rob_levels, key="d1")
-            d2 = st.selectbox("D2 — Deviation from intended intervention", rob_levels, key="d2")
-            d3 = st.selectbox("D3 — Missing outcome data", rob_levels, key="d3")
+            d1 = st.selectbox("D1 — Randomisation process", rob_levels, key="d1",
+                index=None,
+                placeholder="— select —",)
+            d2 = st.selectbox("D2 — Deviation from intended intervention", rob_levels, key="d2",
+                index=None,
+                placeholder="— select —",)
+            d3 = st.selectbox("D3 — Missing outcome data", rob_levels, key="d3",
+                index=None,
+                placeholder="— select —",)
         with rc2:
-            d4 = st.selectbox("D4 — Measurement of outcome", rob_levels, key="d4")
-            d5 = st.selectbox("D5 — Selective reporting", rob_levels, key="d5")
-            rob_overall = st.selectbox("★ Overall RoB-2", rob_levels, key="rob_overall")
+            d4 = st.selectbox("D4 — Measurement of outcome", rob_levels, key="d4",
+                index=None,
+                placeholder="— select —",)
+            d5 = st.selectbox("D5 — Selective reporting", rob_levels, key="d5",
+                index=None,
+                placeholder="— select —",)
+            rob_overall = st.selectbox("★ Overall RoB-2", rob_levels, key="rob_overall",
+                index=None,
+                placeholder="— select —",)
         rob_comments = st.text_area("RoB-2 comments / supporting quotes", height=68, key="rob_comments")
 
         st.markdown("---")
@@ -681,7 +741,9 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                  (3.0, "Randomised controlled trial (RCT)")],
                 format_func=lambda x: f"{x[0]} — {x[1]}",
                 key="mersqi_design",
-            )
+            
+                index=None,
+                placeholder="— select —",)
             mersqi_sampling = st.selectbox(
                 "2. Sampling (institutions + response rate)",
                 [(0.5, "1 institution OR response <50%"),
@@ -694,14 +756,18 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 help="Simplified composite: institutions (0.5–1.5) + response rate (0.5–1.5). "
                      "Pick the row that best matches your study; use Comments for edge cases.",
                 key="mersqi_sampling",
-            )
+            
+                index=None,
+                placeholder="— select —",)
             mersqi_data = st.selectbox(
                 "3. Type of data",
                 [(1.0, "Subjective only (self-reported)"),
                  (3.0, "Objective (observed/measured)")],
                 format_func=lambda x: f"{x[0]} — {x[1]}",
                 key="mersqi_data",
-            )
+            
+                index=None,
+                placeholder="— select —",)
         with mq2:
             mersqi_validity = st.selectbox(
                 "4. Validity of evaluation instrument",
@@ -711,7 +777,9 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                  (3.0, "All 3 (content + internal structure + relationships)")],
                 format_func=lambda x: f"{x[0]} — {x[1]}",
                 key="mersqi_validity",
-            )
+            
+                index=None,
+                placeholder="— select —",)
             mersqi_analysis = st.selectbox(
                 "5. Data analysis (appropriateness + sophistication)",
                 [(1.0, "Appropriate, descriptive only"),
@@ -719,7 +787,9 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                  (3.0, "Appropriate + sophisticated (e.g., multivariable / mixed)")],
                 format_func=lambda x: f"{x[0]} — {x[1]}",
                 key="mersqi_analysis",
-            )
+            
+                index=None,
+                placeholder="— select —",)
             mersqi_outcomes = st.selectbox(
                 "6. Outcomes (highest level only)",
                 [(1.0, "Satisfaction / attitudes / opinions"),
@@ -728,19 +798,30 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                  (3.0, "Patient / healthcare outcomes")],
                 format_func=lambda x: f"{x[0]} — {x[1]}",
                 key="mersqi_outcomes",
-            )
+            
+                index=None,
+                placeholder="— select —",)
 
-        # Auto-computed total. Note: inside an st.form, this displays the value
-        # from the LAST script run (initial load or previous submit). On the
-        # rerun triggered by Submit, it reflects the user's current selections,
-        # which is also when it's saved to the Sheet — so the saved value is
-        # always correct, even if the displayed value lags by one submit cycle.
-        mersqi_total_num = (
-            mersqi_design[0] + mersqi_sampling[0] + mersqi_data[0]
-            + mersqi_validity[0] + mersqi_analysis[0] + mersqi_outcomes[0]
-        )
-        mersqi_total = f"{mersqi_total_num:.1f}"  # store as string to match other fields
-        st.info(f"📊 **MERSQI total (auto-computed): {mersqi_total} / 18**")
+        # Auto-computed total. Inside an st.form, the displayed value reflects
+        # the LAST script run (initial load or previous submit). At Submit time
+        # the form reruns and the value below is recomputed correctly from the
+        # user's current selections — so the saved value is always accurate
+        # even if the on-screen number lags by one submit cycle.
+        _mersqi_subscores = [
+            mersqi_design, mersqi_sampling, mersqi_data,
+            mersqi_validity, mersqi_analysis, mersqi_outcomes,
+        ]
+        if any(s is None for s in _mersqi_subscores):
+            mersqi_total = ""  # blank if incomplete — submit validation will block
+            _n_done = sum(1 for s in _mersqi_subscores if s is not None)
+            st.warning(
+                f"⚠️ MERSQI incomplete: {_n_done}/6 domains selected. "
+                "Select all 6 to compute the total."
+            )
+        else:
+            mersqi_total_num = sum(s[0] for s in _mersqi_subscores)
+            mersqi_total = f"{mersqi_total_num:.1f}"
+            st.info(f"📊 **MERSQI total (auto-computed): {mersqi_total} / 18**")
 
         mersqi_comments = st.text_area(
             "MERSQI comments / subscale rationale",
@@ -758,10 +839,59 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
     submitted = st.form_submit_button("💾 Submit Arm Data")
 
     if submitted:
+        # ---- Validation: required text + critical selections not-None ----
+        missing_text = []
         if not reviewer.strip():
-            st.error("❌ Please enter your Reviewer Name (Tab 1) before submitting.")
-        elif not author.strip():
-            st.error("❌ Lead Author is required.")
+            missing_text.append("Reviewer Name (Tab 1)")
+        if not author.strip():
+            missing_text.append("Lead Author (Tab 1)")
+
+        # Critical selectbox/radio fields: must NOT be None
+        # (None means user did not actively choose — placeholder still shown)
+        CRITICAL_FIELDS = [
+            ("Study type",                 study_type,       "Tab 1"),
+            ("Setting",                    setting,          "Tab 1"),
+            ("Publication type",           pub_type,         "Tab 1"),
+            ("Unit of randomisation",      unit_random,      "Tab 1"),
+            ("Provider experience level",  exp_level,        "Tab 1"),
+            ("Team interprofessionality",  team_inter,       "Tab 1"),
+            ("NMA Node",                   nma_node,         "Tab 2"),
+            ("CA medium",                  medium,           "Tab 2"),
+            ("CA type",                    ca_type,          "Tab 2"),
+            ("CA logic structure",         ca_logic,         "Tab 2"),
+            ("Pre-training intensity",     pretrain_intensity, "Tab 3"),
+            ("Training method",            train_method,     "Tab 3"),
+            ("Training timing",            train_timing,     "Tab 3"),
+            ("Reader present",             reader_present,   "Tab 3"),
+            ("Interaction style",          interaction,      "Tab 3"),
+            ("Strictness",                 strictness,       "Tab 3"),
+            ("Enforcement",                enforcement,      "Tab 3"),
+            ("Fidelity check",             fidelity_check,   "Tab 3"),
+            ("Adherence outcome direction", adh_direction,   "Tab 4"),
+            ("RoB-2 D1 Randomization",     d1,               "Tab 5"),
+            ("RoB-2 D2 Deviation",         d2,               "Tab 5"),
+            ("RoB-2 D3 Missing data",      d3,               "Tab 5"),
+            ("RoB-2 D4 Measurement",       d4,               "Tab 5"),
+            ("RoB-2 D5 Selective reporting", d5,             "Tab 5"),
+            ("RoB-2 Overall",              rob_overall,      "Tab 5"),
+            ("MERSQI: Study design",       mersqi_design,    "Tab 5"),
+            ("MERSQI: Sampling",           mersqi_sampling,  "Tab 5"),
+            ("MERSQI: Type of data",       mersqi_data,      "Tab 5"),
+            ("MERSQI: Validity",           mersqi_validity,  "Tab 5"),
+            ("MERSQI: Analysis",           mersqi_analysis,  "Tab 5"),
+            ("MERSQI: Outcomes",           mersqi_outcomes,  "Tab 5"),
+        ]
+        missing_select = [
+            f"• **{name}** ({tab})"
+            for name, val, tab in CRITICAL_FIELDS if val is None
+        ]
+
+        if missing_text or missing_select:
+            err_lines = ["❌ **Cannot submit — required fields missing:**"]
+            if missing_text:
+                err_lines += [f"• **{x}**" for x in missing_text]
+            err_lines += missing_select
+            st.error("\n\n".join(err_lines))
         else:
             row_data = [
                 datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %Z"), reviewer,
