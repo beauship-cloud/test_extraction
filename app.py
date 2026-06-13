@@ -1,11 +1,19 @@
 """
-Cognitive Aids NMA — Data Extraction Tool (v4.1)
-Streamlit app matching extraction form v4.1.
+Cognitive Aids NMA — Data Extraction Tool (v4.3)
+Streamlit app matching extraction form v4.3.
 Deploy: GitHub → Streamlit Community Cloud.
 
 Requires:
   - st.secrets["gcp_service_account"] : service-account JSON
   - Google Sheet with header row matching SHEET_HEADERS below
+
+v4.3 changelog (post-pilot, Jun 2026):
+  - +3 columns (appended at end): Publication type, Author contact status,
+    Adherence outcome direction. EXISTING pilot rows remain aligned because
+    append is at the end — but Sheet row 1 headers must be updated to match.
+  - Dropdown additions only: Setting +"In-flight/aeromedical",
+    Reader use mode +"Encouraged (not mandated)",
+    Fidelity check +"Yes — ordinal scale".
 """
 
 import streamlit as st
@@ -24,7 +32,7 @@ TZ = ZoneInfo("America/Toronto")
 # stdlib replacement for scipy.stats.norm.ppf — avoids the scipy dependency
 _norm_ppf = NormalDist().inv_cdf
 
-st.set_page_config(page_title="Cognitive Aids NMA Extraction v4.1", layout="wide")
+st.set_page_config(page_title="Cognitive Aids NMA Extraction v4.3", layout="wide")
 
 # =============================================================================
 # Google Sheets connection
@@ -88,12 +96,16 @@ SHEET_HEADERS = [
     "ROBINS-I applicable", "ROBINS-I Overall", "ROBINS-I Comments",
     # MERSQI
     "MERSQI total (max 18)", "MERSQI Comments",
+    # v4.3 additions (appended at end to preserve existing pilot row alignment)
+    "Publication type",
+    "Author contact status",
+    "Adherence outcome direction",
 ]
 
 # =============================================================================
 # UI
 # =============================================================================
-st.title("🌐 Cognitive Aids NMA — Data Extraction (v4.1)")
+st.title("🌐 Cognitive Aids NMA — Data Extraction (v4.3)")
 st.info(
     """
 **📌 INSTRUCTIONS**
@@ -139,7 +151,7 @@ with st.form("extraction_form", clear_on_submit=False):
             setting = st.selectbox(
                 "Simulated scenario setting",
                 ["OR / Anaesthesia", "ICU", "ED", "Neonatal / Paediatric",
-                 "Pre-hospital / EMS", "Ward", "Other"],
+                 "Pre-hospital / EMS", "In-flight / aeromedical", "Ward", "Other"],
                 help="Clinical context of the simulated emergency itself "
                      "(NOT the training course context). E.g., an ICU-course "
                      "simulating an in-hospital RRT call to ED → code as 'ED'.",
@@ -158,6 +170,30 @@ with st.form("extraction_form", clear_on_submit=False):
                 help="NMA-critical: per-arm N at the unit of analysis. "
                      "For team-randomised studies analysed at process-step level, "
                      "use the level that matches the Mean/SD or events/N reported.",
+            )
+
+        # v4.3: publication metadata
+        pm1, pm2 = st.columns(2)
+        with pm1:
+            pub_type = st.selectbox(
+                "Publication type (NEW v4.3)",
+                ["Full original research",
+                 "Correspondence / Letter",
+                 "Conference abstract",
+                 "Other"],
+                help="Donze 2019 was published as a Letter — flag here so "
+                     "RoB-2 D5 / MERSQI / sample-size scrutiny can be adjusted.",
+            )
+        with pm2:
+            author_contact = st.selectbox(
+                "Author contact status (NEW v4.3)",
+                ["Not needed",
+                 "Pending decision",
+                 "Sent — awaiting reply",
+                 "Received — data added",
+                 "Sent — no reply / declined"],
+                help="Tracks studies where raw data was requested from authors "
+                     "(e.g., Sellmann 5th/95th percentile, Donze n unknown).",
             )
 
         st.markdown("---")
@@ -287,12 +323,15 @@ with st.form("extraction_form", clear_on_submit=False):
             reader_mode = st.selectbox(
                 "Reader use mode (NEW v4.1)",
                 ["Mandated (required by protocol)",
+                 "Encouraged (not mandated)",
                  "Suggested / encouraged",
                  "Discretionary",
                  "Not used",
                  "Unclear"],
                 help="Sharif (Apr mtg): captures whether reader-use was enforced. "
-                     "Distinct from who reads.",
+                     "Distinct from who reads. "
+                     "v4.3: 'Encouraged (not mandated)' added for Koers-style studies "
+                     "where reader-use was actively promoted but not required.",
             )
         with r2:
             interaction = st.selectbox(
@@ -326,9 +365,12 @@ with st.form("extraction_form", clear_on_submit=False):
             fidelity_check = st.selectbox(
                 "CA use fidelity check (was actual use monitored?)",
                 ["Yes — quantitative (e.g., observed/timed use)",
+                 "Yes — ordinal scale (e.g., 0–5 rating)",
                  "Yes — qualitative only (mentioned in narrative)",
                  "No (not reported)",
                  "Unclear"],
+                help="v4.3: 'Yes — ordinal scale' added for Bould-style fidelity "
+                     "ratings (0–5 use scale) — distinct from raw observed counts.",
             )
         with e2:
             fidelity_rate = st.text_input(
@@ -429,6 +471,17 @@ with st.form("extraction_form", clear_on_submit=False):
 
         # --------- Outcome 1: Adherence (PRIMARY, continuous) ----------
         st.markdown("### Outcome 1 — Adherence / task completion (★ PRIMARY, continuous, SMD)")
+        adh_direction = st.radio(
+            "★ Outcome direction (NEW v4.3 — needed for NMA SMD sign)",
+            ["Higher = better (e.g., % steps completed, checklist score)",
+             "Lower = better (e.g., % steps missed, failure rate)",
+             "N/A — outcome not extracted in this arm"],
+            horizontal=True,
+            help="NMA convention: SMDs aligned so positive = pro-CA. "
+                 "If outcome is reported in the 'lower=better' direction (failure %, "
+                 "errors per case), the SMD sign will be flipped at analysis. "
+                 "Recording direction here removes guesswork at sign-alignment.",
+        )
         o1c1, o1c2, o1c3 = st.columns(3)
         with o1c1: adh_mean = st.text_input("★ Mean")
         with o1c2: adh_sd = st.text_input("★ SD")
@@ -595,6 +648,8 @@ with st.form("extraction_form", clear_on_submit=False):
                 robins_applicable, robins_overall, robins_comments,
                 # MERSQI
                 mersqi_total, mersqi_comments,
+                # v4.3 additions (appended to match SHEET_HEADERS)
+                pub_type, author_contact, adh_direction,
             ]
 
             # Sanity check vs SHEET_HEADERS
