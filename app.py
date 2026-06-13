@@ -1,32 +1,35 @@
 """
-Cognitive Aids NMA — Data Extraction Tool (v4.4)
-Streamlit app matching extraction form v4.4.
+Cognitive Aids NMA — Data Extraction Tool (v4.5)
+Streamlit app matching extraction form v4.5.
 Deploy: GitHub → Streamlit Community Cloud.
 
 Requires:
   - st.secrets["gcp_service_account"] : service-account JSON
   - Google Sheet with header row matching SHEET_HEADERS below
 
-v4.3 changelog (post-pilot, Jun 2026):
-  - +3 columns (appended at end): Publication type, Author contact status,
+v4.5 changelog (Jun 2026):
+  - Removed Clear ALL / Clear arm-specific buttons. Streamlit form caching
+    made these unreliable, and F5 (browser refresh) is the simpler, more
+    predictable reset path. Saves complexity, focuses on save reliability.
+  - Workflow returns to: F5 = fresh study; manually edit fields between
+    arms of the same study (the pilot workflow that already worked).
+  - MERSQI calculator: replaced single-total text input with 6 domain
+    selectboxes (Reed et al. 2007). Total is auto-computed and saved to
+    the existing "MERSQI total" column. No new columns — only the total
+    is stored; per-domain selections are not preserved across submits.
+
+v4.4 retained:
+  - enter_to_submit=False on the form (Enter no longer accidentally submits).
+  - +1 column: Coding uncertainty log (Tab 1 end).
+  - Personal-name references removed from form text.
+  - Explicit `key=` on every widget (kept for Streamlit best practice).
+
+v4.3 retained:
+  - +3 columns: Publication type, Author contact status,
     Adherence outcome direction.
-  - Dropdown additions only: Setting +"In-flight/aeromedical",
+  - Dropdown additions: Setting +"In-flight/aeromedical",
     Reader use mode +"Encouraged (not mandated)",
     Fidelity check +"Yes — ordinal scale".
-
-v4.4 changelog (UX / safety, Jun 2026):
-  - enter_to_submit=False on the form: pressing Enter no longer submits.
-    Removes the "Press Enter to submit form" hover hint and the
-    accidental-submission risk that comes with it.
-  - +1 column (appended at end): Coding uncertainty log — single global
-    free-text capturing WHY any "Unclear" was selected (Tab 1, end).
-  - Clear Form buttons (placed ABOVE the form, outside it):
-      * "Clear ALL fields" — for starting a new study.
-      * "Clear arm-specific only" — preserves study-level fields for the
-        next arm of the same study.
-    Replaces the F5/refresh workflow which risked accidental data loss.
-  - All widgets now have explicit `key=` parameters so session_state
-    can manage clearing reliably.
 """
 
 import streamlit as st
@@ -45,7 +48,7 @@ TZ = ZoneInfo("America/Toronto")
 # stdlib replacement for scipy.stats.norm.ppf — avoids the scipy dependency
 _norm_ppf = NormalDist().inv_cdf
 
-st.set_page_config(page_title="Cognitive Aids NMA Extraction v4.4", layout="wide")
+st.set_page_config(page_title="Cognitive Aids NMA Extraction v4.5", layout="wide")
 
 # =============================================================================
 # Google Sheets connection
@@ -118,116 +121,20 @@ SHEET_HEADERS = [
 ]
 
 # =============================================================================
-# Form field key registries — used by Clear Form buttons (v4.4)
-# =============================================================================
-# ALL form widget keys, in any order. Clearing these resets the entire form.
-ALL_FORM_KEYS = [
-    # Tab 1 — study & population
-    "reviewer", "author", "year", "study_type", "country", "setting", "scenario",
-    "total_n", "arm_n", "pub_type", "author_contact",
-    "unit_random", "exp_level", "team_compo", "team_inter",
-    "coding_uncertainty_log",
-    # Tab 2 — CA / Node
-    "nma_node", "arm_no", "node_rationale", "arm_label", "aid_name",
-    "medium", "ca_type", "ca_logic",
-    # Tab 3 — implementation
-    "pretrain_intensity", "train_duration", "train_method", "train_timing",
-    "pretrain_desc", "reader_present", "reader_mode", "interaction",
-    "strictness", "enforcement", "fidelity_check", "fidelity_rate",
-    "implementation_narrative",
-    # Tab 4 — outcomes
-    "adh_direction", "adh_mean", "adh_sd", "adh_n", "adh_orig", "adh_raw",
-    "adh_conv", "adh_kp", "adh_comments",
-    "time_mean", "time_sd", "time_n", "time_orig", "time_raw", "time_conv",
-    "time_comments",
-    "err_events", "err_n", "err_measure", "err_orig", "err_comments",
-    "nts_mean", "nts_sd", "nts_n", "nts_instrument", "nts_comments",
-    # Tab 5 — RoB & quality
-    "d1", "d2", "d3", "d4", "d5", "rob_overall", "rob_comments",
-    "robins_applicable", "robins_overall", "robins_comments",
-    "mersqi_total", "mersqi_comments",
-]
-
-# Arm-specific keys: cleared when moving to the NEXT arm of the SAME study.
-# Study-level fields (Reviewer, Author, Year, Study Type, Country, Setting,
-# Scenario, Total N, Publication type, Author contact, Population & Team,
-# Coding uncertainty log, RoB-2, ROBINS-I, MERSQI) are preserved.
-ARM_SPECIFIC_KEYS = [
-    # arm-level N
-    "arm_n",
-    # Tab 2 — all CA / Node info changes per arm
-    "nma_node", "arm_no", "node_rationale", "arm_label", "aid_name",
-    "medium", "ca_type", "ca_logic",
-    # Tab 3 — implementation can differ per arm (e.g., Control has no reader)
-    "pretrain_intensity", "train_duration", "train_method", "train_timing",
-    "pretrain_desc", "reader_present", "reader_mode", "interaction",
-    "strictness", "enforcement", "fidelity_check", "fidelity_rate",
-    "implementation_narrative",
-    # Tab 4 — outcomes always per arm
-    "adh_direction", "adh_mean", "adh_sd", "adh_n", "adh_orig", "adh_raw",
-    "adh_conv", "adh_kp", "adh_comments",
-    "time_mean", "time_sd", "time_n", "time_orig", "time_raw", "time_conv",
-    "time_comments",
-    "err_events", "err_n", "err_measure", "err_orig", "err_comments",
-    "nts_mean", "nts_sd", "nts_n", "nts_instrument", "nts_comments",
-]
-
-def _clear_keys(keys):
-    """Delete the given keys from session_state so widgets revert to defaults."""
-    for k in keys:
-        if k in st.session_state:
-            del st.session_state[k]
-
-# =============================================================================
 # UI
 # =============================================================================
-st.title("🌐 Cognitive Aids NMA — Data Extraction (v4.4)")
+st.title("🌐 Cognitive Aids NMA — Data Extraction (v4.5)")
 st.info(
     """
 **📌 INSTRUCTIONS**
 1. Enter your name in **Reviewer Name** (Tab 1) — required.
 2. Extract data for **ONE arm per submission**.
-3. **Multi-arm study**: after submitting arm 1, use the **🧹 Clear arm-specific** button below → update Arm No., Arm Label, NMA Node, and Outcomes → Submit again. Study-level fields are preserved.
-4. **New study**: use the **🔄 Clear ALL** button below to safely reset every field.
-   (Avoid F5 / browser refresh — it clears fields but also resets the page.)
+3. **Multi-arm study**: after submitting arm 1, just update Arm No., Arm Label, NMA Node, and Outcomes → Submit again. Other fields stay.
+4. **New study**: refresh browser (F5 / Cmd+R) to clear all fields.
 5. ★ = NMA-critical field (Node, N per arm, Mean/SD/N for primary outcome).
 6. For median-reported outcomes, use the **Median → Mean/SD converter** in Tab 4 (Wan 2014 > Hozo 2005 > Luo 2018).
 """
 )
-
-# -----------------------------------------------------------------------------
-# Clear Form buttons (OUTSIDE the form — st.form_submit_button is the only
-# button type permitted inside an st.form, so reset buttons must live here).
-#
-# Use on_click callbacks (not `if st.button(): clear(); st.rerun()`) — the
-# callback fires BEFORE the next script run, so when widgets re-render they
-# initialise from cleared session_state. The `if + st.rerun()` pattern is
-# unreliable inside forms because widget UI state can persist across the
-# rerun in some Streamlit versions.
-# -----------------------------------------------------------------------------
-def _clear_all_callback():
-    _clear_keys(ALL_FORM_KEYS)
-
-def _clear_arm_callback():
-    _clear_keys(ARM_SPECIFIC_KEYS)
-
-cb1, cb2, cb3 = st.columns([2, 2, 5])
-with cb1:
-    st.button(
-        "🔄 Clear ALL fields (new study)",
-        on_click=_clear_all_callback,
-        help="Resets every field in every tab. Use when starting a new study. "
-             "Cannot be undone — any unsubmitted data will be lost.",
-    )
-with cb2:
-    st.button(
-        "🧹 Clear arm-specific (next arm)",
-        on_click=_clear_arm_callback,
-        help="Clears arm-level fields only: NMA Node, Arm No., Arm Label, CA "
-             "description, implementation, and all outcomes. Keeps study-level "
-             "fields (Reviewer, Author, Year, population, RoB, MERSQI, etc.) "
-             "so you can submit the next arm of the same study quickly.",
-    )
 
 with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
 
@@ -757,12 +664,92 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
 
         st.markdown("---")
         st.subheader("MERSQI (medical education research quality)")
-        mersqi_total = st.text_input("MERSQI total score (max 18)",
-                                     help="Sum of 6 subscales: study design (3), sampling (3), "
-                                          "data type (3), validity (3), analysis appropriate (1), "
-                                          "analysis sophistication (2), highest outcome (3).",
-            key="mersqi_total",)
-        mersqi_comments = st.text_area("MERSQI comments / subscale breakdown", height=68, key="mersqi_comments")
+        st.caption(
+            "📊 Score each of 6 domains (Reed et al. 2007). Total is auto-computed "
+            "on Submit. Per-domain scores are NOT separately stored — only the "
+            "total goes to the Sheet. Use the comments box for any subscale "
+            "rationale that needs to be preserved."
+        )
+
+        mq1, mq2 = st.columns(2)
+        with mq1:
+            mersqi_design = st.selectbox(
+                "1. Study design",
+                [(1.0, "Single group, post-test only"),
+                 (1.5, "Single group, pre-post"),
+                 (2.0, "Non-randomised 2-group"),
+                 (3.0, "Randomised controlled trial (RCT)")],
+                format_func=lambda x: f"{x[0]} — {x[1]}",
+                key="mersqi_design",
+            )
+            mersqi_sampling = st.selectbox(
+                "2. Sampling (institutions + response rate)",
+                [(0.5, "1 institution OR response <50%"),
+                 (1.0, "1 institution + response 50–74%"),
+                 (1.5, "1 inst. + response ≥75%, OR 2 inst. + response 50–74%"),
+                 (2.0, "2 institutions + response ≥75%"),
+                 (2.5, "≥3 institutions + response 50–74%"),
+                 (3.0, "≥3 institutions + response ≥75%")],
+                format_func=lambda x: f"{x[0]} — {x[1]}",
+                help="Simplified composite: institutions (0.5–1.5) + response rate (0.5–1.5). "
+                     "Pick the row that best matches your study; use Comments for edge cases.",
+                key="mersqi_sampling",
+            )
+            mersqi_data = st.selectbox(
+                "3. Type of data",
+                [(1.0, "Subjective only (self-reported)"),
+                 (3.0, "Objective (observed/measured)")],
+                format_func=lambda x: f"{x[0]} — {x[1]}",
+                key="mersqi_data",
+            )
+        with mq2:
+            mersqi_validity = st.selectbox(
+                "4. Validity of evaluation instrument",
+                [(0.0, "None of content/structure/relationships reported"),
+                 (1.0, "1 of 3 validity dimensions reported"),
+                 (2.0, "2 of 3 validity dimensions reported"),
+                 (3.0, "All 3 (content + internal structure + relationships)")],
+                format_func=lambda x: f"{x[0]} — {x[1]}",
+                key="mersqi_validity",
+            )
+            mersqi_analysis = st.selectbox(
+                "5. Data analysis (appropriateness + sophistication)",
+                [(1.0, "Appropriate, descriptive only"),
+                 (2.0, "Appropriate, beyond descriptive (inferential)"),
+                 (3.0, "Appropriate + sophisticated (e.g., multivariable / mixed)")],
+                format_func=lambda x: f"{x[0]} — {x[1]}",
+                key="mersqi_analysis",
+            )
+            mersqi_outcomes = st.selectbox(
+                "6. Outcomes (highest level only)",
+                [(1.0, "Satisfaction / attitudes / opinions"),
+                 (1.5, "Knowledge / skills"),
+                 (2.0, "Behaviours (in practice)"),
+                 (3.0, "Patient / healthcare outcomes")],
+                format_func=lambda x: f"{x[0]} — {x[1]}",
+                key="mersqi_outcomes",
+            )
+
+        # Auto-computed total. Note: inside an st.form, this displays the value
+        # from the LAST script run (initial load or previous submit). On the
+        # rerun triggered by Submit, it reflects the user's current selections,
+        # which is also when it's saved to the Sheet — so the saved value is
+        # always correct, even if the displayed value lags by one submit cycle.
+        mersqi_total_num = (
+            mersqi_design[0] + mersqi_sampling[0] + mersqi_data[0]
+            + mersqi_validity[0] + mersqi_analysis[0] + mersqi_outcomes[0]
+        )
+        mersqi_total = f"{mersqi_total_num:.1f}"  # store as string to match other fields
+        st.info(f"📊 **MERSQI total (auto-computed): {mersqi_total} / 18**")
+
+        mersqi_comments = st.text_area(
+            "MERSQI comments / subscale rationale",
+            height=68,
+            help="Optional. Note any domain you scored conservatively or any "
+                 "ambiguity (e.g., 'Sampling: only 1 institution but unusually "
+                 "high response rate of 92% — scored 1.5').",
+            key="mersqi_comments",
+        )
 
     # =========================================================================
     # SUBMIT
@@ -833,8 +820,8 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                     st.warning(
                         """
 **⚠️ Before clicking Submit again:**
-- **NEXT ARM, same study**: scroll up and click **🧹 Clear arm-specific (next arm)** → update Arm No., Arm Label, NMA Node, and Outcomes → Submit.
-- **NEW study**: scroll up and click **🔄 Clear ALL fields (new study)**.
+- **NEXT ARM, same study**: update Arm No., Arm Label, NMA Node, and Outcomes only — other fields stay.
+- **NEW study**: refresh browser (F5 / Cmd+R) to clear all fields.
 """
                     )
                 except Exception as e:
