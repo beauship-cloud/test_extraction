@@ -1,6 +1,6 @@
 """
-Cognitive Aids NMA — Data Extraction Tool (v4.3)
-Streamlit app matching extraction form v4.3.
+Cognitive Aids NMA — Data Extraction Tool (v4.4)
+Streamlit app matching extraction form v4.4.
 Deploy: GitHub → Streamlit Community Cloud.
 
 Requires:
@@ -9,11 +9,24 @@ Requires:
 
 v4.3 changelog (post-pilot, Jun 2026):
   - +3 columns (appended at end): Publication type, Author contact status,
-    Adherence outcome direction. EXISTING pilot rows remain aligned because
-    append is at the end — but Sheet row 1 headers must be updated to match.
+    Adherence outcome direction.
   - Dropdown additions only: Setting +"In-flight/aeromedical",
     Reader use mode +"Encouraged (not mandated)",
     Fidelity check +"Yes — ordinal scale".
+
+v4.4 changelog (UX / safety, Jun 2026):
+  - enter_to_submit=False on the form: pressing Enter no longer submits.
+    Removes the "Press Enter to submit form" hover hint and the
+    accidental-submission risk that comes with it.
+  - +1 column (appended at end): Coding uncertainty log — single global
+    free-text capturing WHY any "Unclear" was selected (Tab 1, end).
+  - Clear Form buttons (placed ABOVE the form, outside it):
+      * "Clear ALL fields" — for starting a new study.
+      * "Clear arm-specific only" — preserves study-level fields for the
+        next arm of the same study.
+    Replaces the F5/refresh workflow which risked accidental data loss.
+  - All widgets now have explicit `key=` parameters so session_state
+    can manage clearing reliably.
 """
 
 import streamlit as st
@@ -32,7 +45,7 @@ TZ = ZoneInfo("America/Toronto")
 # stdlib replacement for scipy.stats.norm.ppf — avoids the scipy dependency
 _norm_ppf = NormalDist().inv_cdf
 
-st.set_page_config(page_title="Cognitive Aids NMA Extraction v4.3", layout="wide")
+st.set_page_config(page_title="Cognitive Aids NMA Extraction v4.4", layout="wide")
 
 # =============================================================================
 # Google Sheets connection
@@ -100,25 +113,113 @@ SHEET_HEADERS = [
     "Publication type",
     "Author contact status",
     "Adherence outcome direction",
+    # v4.4 addition
+    "Coding uncertainty log",
 ]
+
+# =============================================================================
+# Form field key registries — used by Clear Form buttons (v4.4)
+# =============================================================================
+# ALL form widget keys, in any order. Clearing these resets the entire form.
+ALL_FORM_KEYS = [
+    # Tab 1 — study & population
+    "reviewer", "author", "year", "study_type", "country", "setting", "scenario",
+    "total_n", "arm_n", "pub_type", "author_contact",
+    "unit_random", "exp_level", "team_compo", "team_inter",
+    "coding_uncertainty_log",
+    # Tab 2 — CA / Node
+    "nma_node", "arm_no", "node_rationale", "arm_label", "aid_name",
+    "medium", "ca_type", "ca_logic",
+    # Tab 3 — implementation
+    "pretrain_intensity", "train_duration", "train_method", "train_timing",
+    "pretrain_desc", "reader_present", "reader_mode", "interaction",
+    "strictness", "enforcement", "fidelity_check", "fidelity_rate",
+    "implementation_narrative",
+    # Tab 4 — outcomes
+    "adh_direction", "adh_mean", "adh_sd", "adh_n", "adh_orig", "adh_raw",
+    "adh_conv", "adh_kp", "adh_comments",
+    "time_mean", "time_sd", "time_n", "time_orig", "time_raw", "time_conv",
+    "time_comments",
+    "err_events", "err_n", "err_measure", "err_orig", "err_comments",
+    "nts_mean", "nts_sd", "nts_n", "nts_instrument", "nts_comments",
+    # Tab 5 — RoB & quality
+    "d1", "d2", "d3", "d4", "d5", "rob_overall", "rob_comments",
+    "robins_applicable", "robins_overall", "robins_comments",
+    "mersqi_total", "mersqi_comments",
+]
+
+# Arm-specific keys: cleared when moving to the NEXT arm of the SAME study.
+# Study-level fields (Reviewer, Author, Year, Study Type, Country, Setting,
+# Scenario, Total N, Publication type, Author contact, Population & Team,
+# Coding uncertainty log, RoB-2, ROBINS-I, MERSQI) are preserved.
+ARM_SPECIFIC_KEYS = [
+    # arm-level N
+    "arm_n",
+    # Tab 2 — all CA / Node info changes per arm
+    "nma_node", "arm_no", "node_rationale", "arm_label", "aid_name",
+    "medium", "ca_type", "ca_logic",
+    # Tab 3 — implementation can differ per arm (e.g., Control has no reader)
+    "pretrain_intensity", "train_duration", "train_method", "train_timing",
+    "pretrain_desc", "reader_present", "reader_mode", "interaction",
+    "strictness", "enforcement", "fidelity_check", "fidelity_rate",
+    "implementation_narrative",
+    # Tab 4 — outcomes always per arm
+    "adh_direction", "adh_mean", "adh_sd", "adh_n", "adh_orig", "adh_raw",
+    "adh_conv", "adh_kp", "adh_comments",
+    "time_mean", "time_sd", "time_n", "time_orig", "time_raw", "time_conv",
+    "time_comments",
+    "err_events", "err_n", "err_measure", "err_orig", "err_comments",
+    "nts_mean", "nts_sd", "nts_n", "nts_instrument", "nts_comments",
+]
+
+def _clear_keys(keys):
+    """Delete the given keys from session_state so widgets revert to defaults."""
+    for k in keys:
+        if k in st.session_state:
+            del st.session_state[k]
 
 # =============================================================================
 # UI
 # =============================================================================
-st.title("🌐 Cognitive Aids NMA — Data Extraction (v4.3)")
+st.title("🌐 Cognitive Aids NMA — Data Extraction (v4.4)")
 st.info(
     """
 **📌 INSTRUCTIONS**
 1. Enter your name in **Reviewer Name** (Tab 1) — required.
 2. Extract data for **ONE arm per submission**.
-3. **Multi-arm study**: after submitting arm 1, just update Arm No., Arm Label, and Outcomes → click Submit again. Other fields stay.
-4. **New study**: refresh browser (F5 / Cmd+R) to clear all fields.
+3. **Multi-arm study**: after submitting arm 1, use the **🧹 Clear arm-specific** button below → update Arm No., Arm Label, NMA Node, and Outcomes → Submit again. Study-level fields are preserved.
+4. **New study**: use the **🔄 Clear ALL** button below to safely reset every field.
+   (Avoid F5 / browser refresh — it clears fields but also resets the page.)
 5. ★ = NMA-critical field (Node, N per arm, Mean/SD/N for primary outcome).
 6. For median-reported outcomes, use the **Median → Mean/SD converter** in Tab 4 (Wan 2014 > Hozo 2005 > Luo 2018).
 """
 )
 
-with st.form("extraction_form", clear_on_submit=False):
+# -----------------------------------------------------------------------------
+# Clear Form buttons (OUTSIDE the form — st.form_submit_button is the only
+# button type permitted inside an st.form, so reset buttons must live here).
+# -----------------------------------------------------------------------------
+cb1, cb2, cb3 = st.columns([2, 2, 5])
+with cb1:
+    if st.button(
+        "🔄 Clear ALL fields (new study)",
+        help="Resets every field in every tab. Use when starting a new study. "
+             "Cannot be undone — any unsubmitted data will be lost.",
+    ):
+        _clear_keys(ALL_FORM_KEYS)
+        st.rerun()
+with cb2:
+    if st.button(
+        "🧹 Clear arm-specific (next arm)",
+        help="Clears arm-level fields only: NMA Node, Arm No., Arm Label, CA "
+             "description, implementation, and all outcomes. Keeps study-level "
+             "fields (Reviewer, Author, Year, population, RoB, MERSQI, etc.) "
+             "so you can submit the next arm of the same study quickly.",
+    ):
+        _clear_keys(ARM_SPECIFIC_KEYS)
+        st.rerun()
+
+with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📑 1. Study & Population",
@@ -139,15 +240,16 @@ with st.form("extraction_form", clear_on_submit=False):
         st.subheader("General Study Characteristics")
         c1, c2, c3 = st.columns(3)
         with c1:
-            author = st.text_input("Lead Author (last name)")
-            year = st.number_input("Publication Year", 1990, 2030, 2024)
+            author = st.text_input("Lead Author (last name)", key="author")
+            year = st.number_input("Publication Year", 1990, 2030, 2024, key="year")
             study_type = st.selectbox(
                 "Study Type",
                 ["RCT", "Pilot RCT", "Cluster RCT", "Crossover RCT",
                  "Quasi-experimental", "Observational/Non-randomised", "Other"],
-            )
+            
+                key="study_type",)
         with c2:
-            country = st.text_input("Country")
+            country = st.text_input("Country", key="country")
             setting = st.selectbox(
                 "Simulated scenario setting",
                 ["OR / Anaesthesia", "ICU", "ED", "Neonatal / Paediatric",
@@ -155,8 +257,9 @@ with st.form("extraction_form", clear_on_submit=False):
                 help="Clinical context of the simulated emergency itself "
                      "(NOT the training course context). E.g., an ICU-course "
                      "simulating an in-hospital RRT call to ED → code as 'ED'.",
-            )
-            scenario = st.text_input("Scenario (e.g., MH, cardiac arrest, anaphylaxis)")
+            
+                key="setting",)
+            scenario = st.text_input("Scenario (e.g., MH, cardiac arrest, anaphylaxis)", key="scenario")
         with c3:
             total_n = st.number_input(
                 "Total N (all arms)", min_value=0, value=0,
@@ -164,13 +267,15 @@ with st.form("extraction_form", clear_on_submit=False):
                      "If unit-of-randomisation ≠ unit-of-analysis (e.g., teams "
                      "randomised but process-steps analysed), state both in "
                      "the Adherence comments field.",
-            )
+            
+                key="total_n",)
             arm_n = st.number_input(
                 "★ N (this arm)", min_value=0, value=0,
                 help="NMA-critical: per-arm N at the unit of analysis. "
                      "For team-randomised studies analysed at process-step level, "
                      "use the level that matches the Mean/SD or events/N reported.",
-            )
+            
+                key="arm_n",)
 
         # v4.3: publication metadata
         pm1, pm2 = st.columns(2)
@@ -183,7 +288,8 @@ with st.form("extraction_form", clear_on_submit=False):
                  "Other"],
                 help="Donze 2019 was published as a Letter — flag here so "
                      "RoB-2 D5 / MERSQI / sample-size scrutiny can be adjusted.",
-            )
+            
+                key="pub_type",)
         with pm2:
             author_contact = st.selectbox(
                 "Author contact status (NEW v4.3)",
@@ -194,7 +300,8 @@ with st.form("extraction_form", clear_on_submit=False):
                  "Sent — no reply / declined"],
                 help="Tracks studies where raw data was requested from authors "
                      "(e.g., Sellmann 5th/95th percentile, Donze n unknown).",
-            )
+            
+                key="author_contact",)
 
         st.markdown("---")
         st.subheader("Population & Team")
@@ -204,15 +311,18 @@ with st.form("extraction_form", clear_on_submit=False):
                 "Unit of randomisation",
                 ["Individual (single-provider)", "Team (multi-provider)",
                  "Cluster", "Unclear"],
-            )
+            
+                key="unit_random",)
             exp_level = st.selectbox(
                 "★ Provider experience [for S4 sensitivity]",
                 ["Trainee", "Experienced", "Mixed", "Unclear"],
-            )
+            
+                key="exp_level",)
         with p2:
             team_compo = st.text_input(
                 "Team composition (free text — e.g., 'surgeon + 2 nurses')"
-            )
+            ,
+                key="team_compo",)
             team_inter = st.selectbox(
                 "Team interprofessionality (NEW v4.1)",
                 ["Single-discipline",
@@ -223,7 +333,24 @@ with st.form("extraction_form", clear_on_submit=False):
                      "Interdisciplinary = e.g., anaesthesia + IM + surgery residents (all MDs). "
                      "Interprofessional = e.g., MD + RN + RT. "
                      "Distinct from individual/team unit-of-randomisation.",
-            )
+            
+                key="team_inter",)
+
+        st.markdown("---")
+        st.subheader("Coding uncertainty log (NEW v4.4)")
+        coding_uncertainty_log = st.text_area(
+            "If any field in any tab was coded as 'Unclear' / 'Not reported', "
+            "note WHY here — one line per field. (Leave blank if no Unclears.)",
+            help="Lets the reconciliation step distinguish 'truly missing from paper' "
+                 "(→ author contact candidate) from 'ambiguous wording in main text' "
+                 "(→ re-read or check supplementary) from 'definition issue' "
+                 "(→ codebook clarification). "
+                 "Example: 'Unit-of-rand: paper says randomised, level not stated; "
+                 "CA logic: appendix needed to judge branching.' "
+                 "Does NOT replace node_rationale (NMA Node has its own dedicated field).",
+            height=100,
+            key="coding_uncertainty_log",
+        )
 
     # -------------------------------------------------------------------------
     # TAB 2 — CA & NMA NODE
@@ -238,34 +365,37 @@ with st.form("extraction_form", clear_on_submit=False):
         )
         n1, n2 = st.columns([1, 2])
         with n1:
-            nma_node = st.selectbox("★ NMA Node", ["Control", "Static", "Dynamic"])
-            arm_no = st.number_input("★ Arm No.", 1, 10, 1)
+            nma_node = st.selectbox("★ NMA Node", ["Control", "Static", "Dynamic"], key="nma_node")
+            arm_no = st.number_input("★ Arm No.", 1, 10, 1, key="arm_no")
         with n2:
             node_rationale = st.text_area(
                 "Node rationale (1 line — why Static vs Dynamic, audits borderline cases)",
                 help="e.g., 'Harari AR = fixed checklist overlay → Static'; "
                      "'Siebert AR = auto-calculates doses → Dynamic'.",
                 height=68,
-            )
+            
+                key="node_rationale",)
 
         st.markdown("---")
         st.subheader("Cognitive Aid Description")
         a1, a2 = st.columns(2)
         with a1:
-            arm_label = st.text_input("★ Arm Label (e.g., 'Paper checklist', 'iPad app')")
-            aid_name = st.text_input("Name of Cognitive Aid (e.g., 'Stanford EM Manual')")
+            arm_label = st.text_input("★ Arm Label (e.g., 'Paper checklist', 'iPad app')", key="arm_label")
+            aid_name = st.text_input("Name of Cognitive Aid (e.g., 'Stanford EM Manual')", key="aid_name")
         with a2:
             medium = st.selectbox(
                 "Format — medium",
                 ["Paper", "Digital — PDF/static screen", "Digital — app/tablet",
                  "Digital — AR/VR", "Hybrid (paper + digital)",
                  "N/A (Control arm)", "Other"],
-            )
+            
+                key="medium",)
             ca_type = st.selectbox(
                 "Format — type",
                 ["Checklist", "Chart / flow diagram", "App", "Tablet interface",
                  "AR overlay", "Mnemonic / memory aid", "N/A (Control)", "Other"],
-            )
+            
+                key="ca_type",)
 
         ca_logic = st.selectbox(
             "CA logic structure (NEW v4.1) — handoff §7 effect modifier",
@@ -278,7 +408,8 @@ with st.form("extraction_form", clear_on_submit=False):
             help="Marshall 2016 and van Haperen explicitly compared linear vs branched. "
                  "If main text doesn't show enough of the CA to judge, code Unclear and "
                  "flag in Implementation narrative — author contact or appendix lookup needed.",
-        )
+        
+            key="ca_logic",)
 
     # -------------------------------------------------------------------------
     # TAB 3 — IMPLEMENTATION FACTORS
@@ -290,22 +421,26 @@ with st.form("extraction_form", clear_on_submit=False):
             pretrain_intensity = st.selectbox(
                 "Pre-training intensity",
                 ["None", "Minimal (<30 min)", "Structured (≥30 min)", "Unclear"],
-            )
+            
+                key="pretrain_intensity",)
             train_duration = st.text_input(
                 "Training duration (free text — e.g., '15 min', '2 sessions of 1 h')"
-            )
+            ,
+                key="train_duration",)
         with t2:
             train_method = st.selectbox(
                 "Training method",
                 ["None", "Lecture", "Video", "Hands-on / orientation",
                  "Combined", "Unclear"],
-            )
+            
+                key="train_method",)
             train_timing = st.selectbox(
                 "Training timing",
                 ["None", "Immediately before scenario", "Same day",
                  "Earlier in study (remote)", "Unclear"],
-            )
-        pretrain_desc = st.text_area("Pre-training description (free text, if provided)", height=68)
+            
+                key="train_timing",)
+        pretrain_desc = st.text_area("Pre-training description (free text, if provided)", height=68, key="pretrain_desc")
 
         st.markdown("---")
         st.subheader("Reader & Interaction")
@@ -319,7 +454,8 @@ with st.form("extraction_form", clear_on_submit=False):
                  "Not reported"],
                 help="Sellmann-style studies where a reader role exists but "
                      "allocation is 'up to the team' code as Yes-discretion, not Yes.",
-            )
+            
+                key="reader_present",)
             reader_mode = st.selectbox(
                 "Reader use mode (NEW v4.1)",
                 ["Mandated (required by protocol)",
@@ -332,20 +468,23 @@ with st.form("extraction_form", clear_on_submit=False):
                      "Distinct from who reads. "
                      "v4.3: 'Encouraged (not mandated)' added for Koers-style studies "
                      "where reader-use was actively promoted but not required.",
-            )
+            
+                key="reader_mode",)
         with r2:
             interaction = st.selectbox(
                 "Interaction style",
                 ["Read-do", "Challenge-response", "Self-read silent",
                  "Combined", "N/A (Control)", "Unclear"],
-            )
+            
+                key="interaction",)
             strictness = st.selectbox(
                 "Strictness of CA workflow (within the aid)",
                 ["Strict (every step must be completed)",
                  "Discretionary (steps can be skipped)",
                  "Mixed", "N/A (Control)", "Unclear"],
                 help="If overlaps with CA use enforcement below, prioritise enforcement field.",
-            )
+            
+                key="strictness",)
 
         st.markdown("---")
         st.subheader("CA use enforcement & fidelity (NEW v4.1 — Tim Ramsay's key methodological concern)")
@@ -361,7 +500,8 @@ with st.form("extraction_form", clear_on_submit=False):
                  "Encouraged (instructed but not enforced)",
                  "Available-only (CA placed in environment, no instruction)",
                  "Unclear"],
-            )
+            
+                key="enforcement",)
             fidelity_check = st.selectbox(
                 "CA use fidelity check (was actual use monitored?)",
                 ["Yes — quantitative (e.g., observed/timed use)",
@@ -371,7 +511,8 @@ with st.form("extraction_form", clear_on_submit=False):
                  "Unclear"],
                 help="v4.3: 'Yes — ordinal scale' added for Bould-style fidelity "
                      "ratings (0–5 use scale) — distinct from raw observed counts.",
-            )
+            
+                key="fidelity_check",)
         with e2:
             fidelity_rate = st.text_input(
                 "CA use fidelity rate (% participants who actually used CA, if reported)",
@@ -379,14 +520,16 @@ with st.form("extraction_form", clear_on_submit=False):
                      "Convention: 'wrong CA selected' counts as USED (denominator stays same, "
                      "included in numerator). Report as % and add raw counts in the "
                      "Implementation narrative — e.g., '53% (63/120 used, 5 wrong, 41 not-used)'."
-            )
+            ,
+                key="fidelity_rate",)
 
         implementation_narrative = st.text_area(
             "Implementation narrative (NEW v4.1 — free text)",
             help="Describe how the CA was implemented. Supports Plan-B narrative synthesis "
                  "if NMA proves infeasible from heterogeneity (Sharif's UGRA-paper template).",
             height=100,
-        )
+        
+            key="implementation_narrative",)
 
     # -------------------------------------------------------------------------
     # TAB 4 — OUTCOMES
@@ -423,7 +566,8 @@ with st.form("extraction_form", clear_on_submit=False):
                  "Hozo 2005 — median + min + max",
                  "Luo 2018 — median + (min, max) [alternative mean estimator]"],
                 horizontal=False,
-            )
+            
+                key="cvt_method",)
             cv1, cv2, cv3, cv4 = st.columns(4)
             with cv1: cv_med = st.number_input("Median", value=0.0, format="%.4f", key="cv_med")
             with cv2: cv_a = st.number_input("Q1 / min", value=0.0, format="%.4f", key="cv_a")
@@ -481,11 +625,12 @@ with st.form("extraction_form", clear_on_submit=False):
                  "If outcome is reported in the 'lower=better' direction (failure %, "
                  "errors per case), the SMD sign will be flipped at analysis. "
                  "Recording direction here removes guesswork at sign-alignment.",
-        )
+        
+            key="adh_direction",)
         o1c1, o1c2, o1c3 = st.columns(3)
-        with o1c1: adh_mean = st.text_input("★ Mean")
-        with o1c2: adh_sd = st.text_input("★ SD")
-        with o1c3: adh_n = st.text_input("★ N analyzed (this arm)")
+        with o1c1: adh_mean = st.text_input("★ Mean", key="adh_mean")
+        with o1c2: adh_sd = st.text_input("★ SD", key="adh_sd")
+        with o1c3: adh_n = st.text_input("★ N analyzed (this arm)", key="adh_n")
         o1c4, o1c5 = st.columns(2)
         with o1c4:
             adh_orig = st.selectbox(
@@ -515,9 +660,9 @@ with st.form("extraction_form", clear_on_submit=False):
         st.markdown("### Outcome 2 — Time to first critical action (SECONDARY, continuous)")
         st.caption("Time is SECONDARY — analysed separately, NOT in primary NMA.")
         o2c1, o2c2, o2c3 = st.columns(3)
-        with o2c1: time_mean = st.text_input("Mean")
-        with o2c2: time_sd = st.text_input("SD")
-        with o2c3: time_n = st.text_input("N analyzed")
+        with o2c1: time_mean = st.text_input("Mean", key="time_mean")
+        with o2c2: time_sd = st.text_input("SD", key="time_sd")
+        with o2c3: time_n = st.text_input("N analyzed", key="time_n")
         o2c4, o2c5 = st.columns(2)
         with o2c4:
             time_orig = st.selectbox(
@@ -540,15 +685,16 @@ with st.form("extraction_form", clear_on_submit=False):
         # --------- Outcome 3: Error rate (SECONDARY, dichotomous) ----------
         st.markdown("### Outcome 3 — Error rate (SECONDARY, dichotomous, RR)")
         e3c1, e3c2, e3c3 = st.columns(3)
-        with e3c1: err_events = st.text_input("Events (this arm)")
-        with e3c2: err_n = st.text_input("N analyzed (this arm)")
+        with e3c1: err_events = st.text_input("Events (this arm)", key="err_events")
+        with e3c2: err_n = st.text_input("N analyzed (this arm)", key="err_n")
         with e3c3:
             err_measure = st.selectbox(
                 "Effect measure",
                 ["RR (primary)", "OR (secondary)", "Other", "Not reported"],
-            )
-        err_orig = st.text_input("Original reporting (events/n, %, RR/OR with CI)")
-        err_comments = st.text_input("Error comments")
+            
+                key="err_measure",)
+        err_orig = st.text_input("Original reporting (events/n, %, RR/OR with CI)", key="err_orig")
+        err_comments = st.text_input("Error comments", key="err_comments")
 
         st.markdown("---")
 
@@ -559,8 +705,8 @@ with st.form("extraction_form", clear_on_submit=False):
         with nts1: nts_mean = st.text_input("Mean", key="nts_mean")
         with nts2: nts_sd = st.text_input("SD", key="nts_sd")
         with nts3: nts_n = st.text_input("N analyzed", key="nts_n")
-        nts_instrument = st.text_input("Instrument (e.g., ANTS, NOTECHS, T-NOTECHS)")
-        nts_comments = st.text_input("NTS comments")
+        nts_instrument = st.text_input("Instrument (e.g., ANTS, NOTECHS, T-NOTECHS)", key="nts_instrument")
+        nts_comments = st.text_input("NTS comments", key="nts_comments")
 
     # -------------------------------------------------------------------------
     # TAB 5 — RoB & QUALITY
@@ -570,14 +716,14 @@ with st.form("extraction_form", clear_on_submit=False):
         rob_levels = ["Low", "Some concerns", "High", "N/A (non-randomised)"]
         rc1, rc2 = st.columns(2)
         with rc1:
-            d1 = st.selectbox("D1 — Randomisation process", rob_levels)
-            d2 = st.selectbox("D2 — Deviation from intended intervention", rob_levels)
-            d3 = st.selectbox("D3 — Missing outcome data", rob_levels)
+            d1 = st.selectbox("D1 — Randomisation process", rob_levels, key="d1")
+            d2 = st.selectbox("D2 — Deviation from intended intervention", rob_levels, key="d2")
+            d3 = st.selectbox("D3 — Missing outcome data", rob_levels, key="d3")
         with rc2:
-            d4 = st.selectbox("D4 — Measurement of outcome", rob_levels)
-            d5 = st.selectbox("D5 — Selective reporting", rob_levels)
-            rob_overall = st.selectbox("★ Overall RoB-2", rob_levels)
-        rob_comments = st.text_area("RoB-2 comments / supporting quotes", height=68)
+            d4 = st.selectbox("D4 — Measurement of outcome", rob_levels, key="d4")
+            d5 = st.selectbox("D5 — Selective reporting", rob_levels, key="d5")
+            rob_overall = st.selectbox("★ Overall RoB-2", rob_levels, key="rob_overall")
+        rob_comments = st.text_area("RoB-2 comments / supporting quotes", height=68, key="rob_comments")
 
         st.markdown("---")
         st.subheader("ROBINS-I (for non-randomised studies — e.g., Burden, Everett)")
@@ -586,22 +732,26 @@ with st.form("extraction_form", clear_on_submit=False):
             robins_applicable = st.selectbox(
                 "ROBINS-I applicable?",
                 ["No — study is RCT", "Yes — non-randomised"],
-            )
+            
+                key="robins_applicable",)
         with ri2:
             robins_overall = st.selectbox(
                 "ROBINS-I Overall",
                 ["N/A", "Low", "Moderate", "Serious", "Critical", "No information"],
-            )
+            
+                key="robins_overall",)
         robins_comments = st.text_area("ROBINS-I comments (record per-domain judgements here)",
-                                       height=68)
+                                       height=68,
+            key="robins_comments",)
 
         st.markdown("---")
         st.subheader("MERSQI (medical education research quality)")
         mersqi_total = st.text_input("MERSQI total score (max 18)",
                                      help="Sum of 6 subscales: study design (3), sampling (3), "
                                           "data type (3), validity (3), analysis appropriate (1), "
-                                          "analysis sophistication (2), highest outcome (3).")
-        mersqi_comments = st.text_area("MERSQI comments / subscale breakdown", height=68)
+                                          "analysis sophistication (2), highest outcome (3).",
+            key="mersqi_total",)
+        mersqi_comments = st.text_area("MERSQI comments / subscale breakdown", height=68, key="mersqi_comments")
 
     # =========================================================================
     # SUBMIT
@@ -650,6 +800,8 @@ with st.form("extraction_form", clear_on_submit=False):
                 mersqi_total, mersqi_comments,
                 # v4.3 additions (appended to match SHEET_HEADERS)
                 pub_type, author_contact, adh_direction,
+                # v4.4 addition
+                coding_uncertainty_log,
             ]
 
             # Sanity check vs SHEET_HEADERS
@@ -670,8 +822,8 @@ with st.form("extraction_form", clear_on_submit=False):
                     st.warning(
                         """
 **⚠️ Before clicking Submit again:**
-- **NEXT ARM, same study**: update Arm No., Arm Label, NMA Node, and Outcomes only.
-- **NEW study**: refresh browser (F5 / Cmd+R) to clear all fields.
+- **NEXT ARM, same study**: scroll up and click **🧹 Clear arm-specific (next arm)** → update Arm No., Arm Label, NMA Node, and Outcomes → Submit.
+- **NEW study**: scroll up and click **🔄 Clear ALL fields (new study)**.
 """
                     )
                 except Exception as e:
