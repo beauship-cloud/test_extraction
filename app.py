@@ -591,8 +591,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                  "Recording direction here removes guesswork at sign-alignment.",
         
             key="adh_direction",
-            index=None,
-            placeholder="— select —",)
+            index=None,)
         o1c1, o1c2, o1c3 = st.columns(3)
         with o1c1: adh_mean = st.text_input("★ Mean", key="adh_mean")
         with o1c2: adh_sd = st.text_input("★ SD", key="adh_sd")
