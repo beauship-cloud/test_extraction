@@ -198,26 +198,36 @@ st.info(
 # -----------------------------------------------------------------------------
 # Clear Form buttons (OUTSIDE the form — st.form_submit_button is the only
 # button type permitted inside an st.form, so reset buttons must live here).
+#
+# Use on_click callbacks (not `if st.button(): clear(); st.rerun()`) — the
+# callback fires BEFORE the next script run, so when widgets re-render they
+# initialise from cleared session_state. The `if + st.rerun()` pattern is
+# unreliable inside forms because widget UI state can persist across the
+# rerun in some Streamlit versions.
 # -----------------------------------------------------------------------------
+def _clear_all_callback():
+    _clear_keys(ALL_FORM_KEYS)
+
+def _clear_arm_callback():
+    _clear_keys(ARM_SPECIFIC_KEYS)
+
 cb1, cb2, cb3 = st.columns([2, 2, 5])
 with cb1:
-    if st.button(
+    st.button(
         "🔄 Clear ALL fields (new study)",
+        on_click=_clear_all_callback,
         help="Resets every field in every tab. Use when starting a new study. "
              "Cannot be undone — any unsubmitted data will be lost.",
-    ):
-        _clear_keys(ALL_FORM_KEYS)
-        st.rerun()
+    )
 with cb2:
-    if st.button(
+    st.button(
         "🧹 Clear arm-specific (next arm)",
+        on_click=_clear_arm_callback,
         help="Clears arm-level fields only: NMA Node, Arm No., Arm Label, CA "
              "description, implementation, and all outcomes. Keeps study-level "
              "fields (Reviewer, Author, Year, population, RoB, MERSQI, etc.) "
              "so you can submit the next arm of the same study quickly.",
-    ):
-        _clear_keys(ARM_SPECIFIC_KEYS)
-        st.rerun()
+    )
 
 with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
 
@@ -329,7 +339,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                  "Interdisciplinary (multi-specialty, same profession)",
                  "Interprofessional (multi-profession: MD + RN + paramedic etc.)",
                  "Mixed across arms", "Individual (N/A)", "Unclear"],
-                help="Sharif (Apr mtg): captures team composition. "
+                help="Captures team composition. "
                      "Interdisciplinary = e.g., anaesthesia + IM + surgery residents (all MDs). "
                      "Interprofessional = e.g., MD + RN + RT. "
                      "Distinct from individual/team unit-of-randomisation.",
@@ -464,7 +474,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                  "Discretionary",
                  "Not used",
                  "Unclear"],
-                help="Sharif (Apr mtg): captures whether reader-use was enforced. "
+                help="Captures whether reader-use was enforced. "
                      "Distinct from who reads. "
                      "v4.3: 'Encouraged (not mandated)' added for Koers-style studies "
                      "where reader-use was actively promoted but not required.",
@@ -487,9 +497,10 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 key="strictness",)
 
         st.markdown("---")
-        st.subheader("CA use enforcement & fidelity (NEW v4.1 — Tim Ramsay's key methodological concern)")
+        st.subheader("CA use enforcement & fidelity")
         st.caption(
-            "📌 Tim (Apr mtg): *'What did they do to ensure people USED the cognitive aid?'* "
+            "📌 Key methodological question: *'What did the study do to ensure "
+            "participants USED the cognitive aid?'* "
             "Separates strong implementation studies from passive deployment."
         )
         e1, e2 = st.columns(2)
@@ -526,7 +537,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
         implementation_narrative = st.text_area(
             "Implementation narrative (NEW v4.1 — free text)",
             help="Describe how the CA was implemented. Supports Plan-B narrative synthesis "
-                 "if NMA proves infeasible from heterogeneity (Sharif's UGRA-paper template).",
+                 "if NMA proves infeasible from heterogeneity (UGRA-paper template).",
             height=100,
         
             key="implementation_narrative",)
