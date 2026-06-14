@@ -1,13 +1,13 @@
 """
-Cognitive Aids NMA — Data Extraction Tool (v4.6)
-Streamlit app matching extraction form v4.6.
+Cognitive Aids NMA — Data Extraction Tool (v4.7)
+Streamlit app matching extraction form v4.7.
 Deploy: GitHub → Streamlit Community Cloud.
 
 Requires:
   - st.secrets["gcp_service_account"] : service-account JSON
   - Google Sheet with header row matching SHEET_HEADERS below
 
-v4.6 changelog (Jun 2026) — DATA INTEGRITY:
+v4.7 changelog (Jun 2026) — DATA INTEGRITY:
   - 31 critical selectbox/radio widgets now require an explicit choice
     (index=None + placeholder="— select —"). No more silent acceptance of
     first-option defaults. Affects: study_type, setting, pub_type,
@@ -58,7 +58,7 @@ TZ = ZoneInfo("America/Toronto")
 # stdlib replacement for scipy.stats.norm.ppf — avoids the scipy dependency
 _norm_ppf = NormalDist().inv_cdf
 
-st.set_page_config(page_title="Cognitive Aids NMA Extraction v4.6", layout="wide")
+st.set_page_config(page_title="Cognitive Aids NMA Extraction v4.7", layout="wide")
 
 # =============================================================================
 # Google Sheets connection
@@ -133,7 +133,7 @@ SHEET_HEADERS = [
 # =============================================================================
 # UI
 # =============================================================================
-st.title("🌐 Cognitive Aids NMA — Data Extraction (v4.6)")
+st.title("🌐 Cognitive Aids NMA — Data Extraction (v4.7)")
 st.info(
     """
 **📌 INSTRUCTIONS**
@@ -145,6 +145,11 @@ st.info(
 6. For median-reported outcomes, use the **Median → Mean/SD converter** in Tab 4 (Wan 2014 > Hozo 2005 > Luo 2018).
 """
 )
+
+def _s(x):
+    """Stringify safely for gspread: None → empty string, else str(x)."""
+    return "" if x is None else str(x)
+
 
 with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
 
@@ -593,9 +598,9 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             key="adh_direction",
             index=None,)
         o1c1, o1c2, o1c3 = st.columns(3)
-        with o1c1: adh_mean = st.text_input("★ Mean", key="adh_mean")
-        with o1c2: adh_sd = st.text_input("★ SD", key="adh_sd")
-        with o1c3: adh_n = st.text_input("★ N analyzed (this arm)", key="adh_n")
+        with o1c1: adh_mean = st.number_input("★ Mean", value=None, format="%.4f", help="Leave empty if not extractable; document reason in Adherence comments.", key="adh_mean")
+        with o1c2: adh_sd = st.number_input("★ SD", value=None, min_value=0.0, format="%.4f", help="Leave empty if not extractable.", key="adh_sd")
+        with o1c3: adh_n = st.number_input("★ N analyzed (this arm)", value=None, min_value=0, step=1, help="Integer ≥ 0. Match the unit of analysis used for Mean/SD. Leave empty if not extractable.", key="adh_n")
         o1c4, o1c5 = st.columns(2)
         with o1c4:
             adh_orig = st.selectbox(
@@ -603,7 +608,9 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 ["mean ± SD", "median + IQR", "median + range",
                  "%/proportion", "Other", "Not extractable"],
                 key="adh_orig",
-            )
+            
+                index=None,
+                placeholder="— select —",)
             adh_raw = st.text_input("Raw median stats (median; Q1–Q3 OR min–max; n)", key="adh_raw")
         with o1c5:
             adh_conv = st.selectbox(
@@ -611,12 +618,16 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 ["N/A — reported as mean", "Wan 2014 (median+IQR)",
                  "Hozo 2005 (median+range)", "Luo 2018", "Other"],
                 key="adh_conv",
-            )
+            
+                index=None,
+                placeholder="— select —",)
             adh_kp = st.selectbox(
                 "Kirkpatrick level",
                 ["KP1 Reaction", "KP2 Learning", "KP3 Behaviour", "KP4 Results", "N/A"],
                 key="adh_kp",
-            )
+            
+                index=None,
+                placeholder="— select —",)
         adh_comments = st.text_input("Adherence comments", key="adh_comments")
 
         st.markdown("---")
@@ -625,9 +636,9 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
         st.markdown("### Outcome 2 — Time to first critical action (SECONDARY, continuous)")
         st.caption("Time is SECONDARY — analysed separately, NOT in primary NMA.")
         o2c1, o2c2, o2c3 = st.columns(3)
-        with o2c1: time_mean = st.text_input("Mean", key="time_mean")
-        with o2c2: time_sd = st.text_input("SD", key="time_sd")
-        with o2c3: time_n = st.text_input("N analyzed", key="time_n")
+        with o2c1: time_mean = st.number_input("Mean (seconds)", value=None, format="%.4f", help="Convert from mm:ss to seconds for consistency across studies.", key="time_mean")
+        with o2c2: time_sd = st.number_input("SD (seconds)", value=None, min_value=0.0, format="%.4f", key="time_sd")
+        with o2c3: time_n = st.number_input("N analyzed", value=None, min_value=0, step=1, key="time_n")
         o2c4, o2c5 = st.columns(2)
         with o2c4:
             time_orig = st.selectbox(
@@ -635,14 +646,18 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 ["mean ± SD", "median + IQR", "median + range", "Other",
                  "Not reported"],
                 key="time_orig",
-            )
+            
+                index=None,
+                placeholder="— select —",)
         with o2c5:
             time_raw = st.text_input("Raw median stats (if median)", key="time_raw")
             time_conv = st.selectbox(
                 "Conversion method (if any)",
                 ["N/A", "Wan 2014", "Hozo 2005", "Luo 2018", "Other"],
                 key="time_conv",
-            )
+            
+                index=None,
+                placeholder="— select —",)
         time_comments = st.text_input("Time comments", key="time_comments")
 
         st.markdown("---")
@@ -650,14 +665,16 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
         # --------- Outcome 3: Error rate (SECONDARY, dichotomous) ----------
         st.markdown("### Outcome 3 — Error rate (SECONDARY, dichotomous, RR)")
         e3c1, e3c2, e3c3 = st.columns(3)
-        with e3c1: err_events = st.text_input("Events (this arm)", key="err_events")
-        with e3c2: err_n = st.text_input("N analyzed (this arm)", key="err_n")
+        with e3c1: err_events = st.number_input("Events (this arm)", value=None, min_value=0, step=1, key="err_events")
+        with e3c2: err_n = st.number_input("N analyzed (this arm)", value=None, min_value=0, step=1, key="err_n")
         with e3c3:
             err_measure = st.selectbox(
                 "Effect measure",
                 ["RR (primary)", "OR (secondary)", "Other", "Not reported"],
             
-                key="err_measure",)
+                key="err_measure",
+                index=None,
+                placeholder="— select —",)
         err_orig = st.text_input("Original reporting (events/n, %, RR/OR with CI)", key="err_orig")
         err_comments = st.text_input("Error comments", key="err_comments")
 
@@ -667,9 +684,9 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
         st.markdown("### Outcome 4 — Teamwork / NTS (separate analysis)")
         st.caption("Non-technical skills / teamwork analysed separately.")
         nts1, nts2, nts3 = st.columns(3)
-        with nts1: nts_mean = st.text_input("Mean", key="nts_mean")
-        with nts2: nts_sd = st.text_input("SD", key="nts_sd")
-        with nts3: nts_n = st.text_input("N analyzed", key="nts_n")
+        with nts1: nts_mean = st.number_input("Mean", value=None, format="%.4f", key="nts_mean")
+        with nts2: nts_sd = st.number_input("SD", value=None, min_value=0.0, format="%.4f", key="nts_sd")
+        with nts3: nts_n = st.number_input("N analyzed", value=None, min_value=0, step=1, key="nts_n")
         nts_instrument = st.text_input("Instrument (e.g., ANTS, NOTECHS, T-NOTECHS)", key="nts_instrument")
         nts_comments = st.text_input("NTS comments", key="nts_comments")
 
@@ -710,13 +727,17 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 "ROBINS-I applicable?",
                 ["No — study is RCT", "Yes — non-randomised"],
             
-                key="robins_applicable",)
+                key="robins_applicable",
+                index=None,
+                placeholder="— select —",)
         with ri2:
             robins_overall = st.selectbox(
                 "ROBINS-I Overall",
                 ["N/A", "Low", "Moderate", "Serious", "Critical", "No information"],
             
-                key="robins_overall",)
+                key="robins_overall",
+                index=None,
+                placeholder="— select —",)
         robins_comments = st.text_area("ROBINS-I comments (record per-domain judgements here)",
                                        height=68,
             key="robins_comments",)
@@ -873,6 +894,8 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             ("RoB-2 D4 Measurement",       d4,               "Tab 5"),
             ("RoB-2 D5 Selective reporting", d5,             "Tab 5"),
             ("RoB-2 Overall",              rob_overall,      "Tab 5"),
+            ("ROBINS-I applicable",        robins_applicable,"Tab 5"),
+            ("ROBINS-I Overall",           robins_overall,   "Tab 5"),
             ("MERSQI: Study design",       mersqi_design,    "Tab 5"),
             ("MERSQI: Sampling",           mersqi_sampling,  "Tab 5"),
             ("MERSQI: Type of data",       mersqi_data,      "Tab 5"),
@@ -885,11 +908,31 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             for name, val, tab in CRITICAL_FIELDS if val is None
         ]
 
-        if missing_text or missing_select:
+        # Conditional validation (v4.7): if an outcome value is entered,
+        # its "original format" + "conversion method" must also be selected.
+        conditional_missing = []
+        if adh_mean is not None or adh_sd is not None or adh_n is not None:
+            if adh_orig is None:
+                conditional_missing.append("• **Adherence original format** (Tab 4) — required because Adherence Mean/SD/N entered")
+            if adh_conv is None:
+                conditional_missing.append("• **Adherence conversion method** (Tab 4) — required because Adherence Mean/SD/N entered")
+            if adh_kp is None:
+                conditional_missing.append("• **Adherence Kirkpatrick level** (Tab 4) — required because Adherence Mean/SD/N entered")
+        if time_mean is not None or time_sd is not None or time_n is not None:
+            if time_orig is None:
+                conditional_missing.append("• **Time original format** (Tab 4) — required because Time Mean/SD/N entered")
+            if time_conv is None:
+                conditional_missing.append("• **Time conversion method** (Tab 4) — required because Time Mean/SD/N entered")
+        if err_events is not None or err_n is not None:
+            if err_measure is None:
+                conditional_missing.append("• **Error effect measure** (Tab 4) — required because Error events/N entered")
+
+        if missing_text or missing_select or conditional_missing:
             err_lines = ["❌ **Cannot submit — required fields missing:**"]
             if missing_text:
                 err_lines += [f"• **{x}**" for x in missing_text]
             err_lines += missing_select
+            err_lines += conditional_missing
             st.error("\n\n".join(err_lines))
         else:
             row_data = [
@@ -910,15 +953,15 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 enforcement, fidelity_check, fidelity_rate,
                 implementation_narrative,
                 # Outcome 1 — adherence
-                adh_mean, adh_sd, adh_n,
+                _s(adh_mean), _s(adh_sd), _s(adh_n),
                 adh_orig, adh_raw, adh_conv, adh_kp, adh_comments,
                 # Outcome 2 — time
-                time_mean, time_sd, time_n,
+                _s(time_mean), _s(time_sd), _s(time_n),
                 time_orig, time_raw, time_conv, time_comments,
                 # Outcome 3 — error rate
-                err_events, err_n, err_measure, err_orig, err_comments,
+                _s(err_events), _s(err_n), err_measure, err_orig, err_comments,
                 # Outcome 4 — NTS
-                nts_mean, nts_sd, nts_n, nts_instrument, nts_comments,
+                _s(nts_mean), _s(nts_sd), _s(nts_n), nts_instrument, nts_comments,
                 # RoB-2
                 d1, d2, d3, d4, d5, rob_overall, rob_comments,
                 # ROBINS-I
