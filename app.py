@@ -1,11 +1,19 @@
 """
-Cognitive Aids NMA — Data Extraction Tool (v4.7)
-Streamlit app matching extraction form v4.7.
+Cognitive Aids NMA — Data Extraction Tool (v4.8)
+Streamlit app matching extraction form v4.8.
 Deploy: GitHub → Streamlit Community Cloud.
 
 Requires:
   - st.secrets["gcp_service_account"] : service-account JSON
   - Google Sheet with header row matching SHEET_HEADERS below
+
+v4.8 changelog (Jun 2026):
+  - study_type: added "Within-cluster crossover RCT (A-B-A-B)" for designs
+    like Everett 2017 (randomized scenario order + cluster allocation),
+    retained under the broad RCT reading.
+  - Publication Year: default removed (value=None, placeholder shown) so the
+    year must be entered explicitly — no silent 2024 default.
+  - ROBINS-I block RETAINED (decision pending; not removed).
 
 v4.7 changelog (Jun 2026) — DATA INTEGRITY:
   - 31 critical selectbox/radio widgets now require an explicit choice
@@ -58,7 +66,7 @@ TZ = ZoneInfo("America/Toronto")
 # stdlib replacement for scipy.stats.norm.ppf — avoids the scipy dependency
 _norm_ppf = NormalDist().inv_cdf
 
-st.set_page_config(page_title="Cognitive Aids NMA Extraction v4.7", layout="wide")
+st.set_page_config(page_title="Cognitive Aids NMA Extraction v4.8", layout="wide")
 
 # =============================================================================
 # Google Sheets connection
@@ -133,7 +141,7 @@ SHEET_HEADERS = [
 # =============================================================================
 # UI
 # =============================================================================
-st.title("🌐 Cognitive Aids NMA — Data Extraction (v4.7)")
+st.title("🌐 Cognitive Aids NMA — Data Extraction (v4.8)")
 st.info(
     """
 **📌 INSTRUCTIONS**
@@ -173,12 +181,21 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
         c1, c2, c3 = st.columns(3)
         with c1:
             author = st.text_input("Lead Author (last name)", key="author")
-            year = st.number_input("Publication Year", 1990, 2030, 2024, key="year")
+            year = st.number_input(
+                "Publication Year",
+                min_value=1990, max_value=2030,
+                value=None, step=1,
+                placeholder="— enter year —",
+                key="year",
+            )
             study_type = st.selectbox(
                 "Study Type",
                 ["RCT", "Pilot RCT", "Cluster RCT", "Crossover RCT",
+                 "Within-cluster crossover RCT (A-B-A-B)",
                  "Quasi-experimental", "Observational/Non-randomised", "Other"],
-            
+                help="RCT subtypes all eligible (broad reading). "
+                     "'Within-cluster crossover RCT (A-B-A-B)' covers Everett 2017 "
+                     "(randomized scenario order + cluster allocation).",
                 key="study_type",
                 index=None,
                 placeholder="— select —",)
@@ -865,6 +882,8 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             missing_text.append("Reviewer Name (Tab 1)")
         if not author.strip():
             missing_text.append("Lead Author (Tab 1)")
+        if year is None:
+            missing_text.append("Publication Year (Tab 1)")
 
         # Critical selectbox/radio fields: must NOT be None
         # (None means user did not actively choose — placeholder still shown)
@@ -938,7 +957,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             row_data = [
                 datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %Z"), reviewer,
                 # Study info
-                author, str(year), study_type, country, setting, scenario,
+                author, _s(year), study_type, country, setting, scenario,
                 # Population
                 str(total_n), str(arm_n), unit_random, team_compo,
                 team_inter, exp_level,
