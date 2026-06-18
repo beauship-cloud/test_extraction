@@ -9,8 +9,8 @@ Requires:
 
 v4.9 changelog (Jun 2026):
   - NEW columns: "Simulation Fidelity", "Scenario Complexity"
-    Both appended at END of SHEET_HEADERS to preserve existing row alignment
-    in the Google Sheet (same convention as v4.3 additions).
+    Inserted in SHEET_HEADERS at positions 9-10 (immediately after "Scenario"),
+    matching the current Google Sheet header layout.
   - Widgets placed in Tab 1 (Study & Population) under "Simulation Context"
     section. Both required (★, index=None, placeholder, CRITICAL_FIELDS).
   - Intended use: heterogeneity / transitivity assessment for NMA.
@@ -58,6 +58,8 @@ SHEET_HEADERS = [
     "Timestamp", "Reviewer",
     # Study info
     "Lead Author", "Year", "Study Type", "Country", "Setting", "Scenario",
+    # v4.9 additions — simulation context (matches Google Sheet column order)
+    "Simulation Fidelity", "Scenario Complexity",
     # Population
     "Total N (all arms)", "N (this arm)", "Unit (individual/team)",
     "Team composition (free text)", "Team interprofessionality",
@@ -100,9 +102,6 @@ SHEET_HEADERS = [
     "Author contact status",
     "Adherence outcome direction",
     "Coding uncertainty log",
-    # v4.9 additions (appended at end to preserve existing row alignment)
-    "Simulation Fidelity",
-    "Scenario Complexity",
 ]
 
 # =============================================================================
@@ -610,6 +609,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             row_data = [
                 datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %Z"), reviewer,
                 author, _s(year), study_type, country, setting, scenario,
+                sim_fidelity, scen_complexity,
                 str(total_n), str(arm_n), unit_random, team_compo,
                 team_inter, exp_level,
                 nma_node, node_rationale, str(arm_no), arm_label, aid_name,
@@ -631,8 +631,6 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 mersqi_total, mersqi_comments,
                 pub_type, author_contact, adh_direction,
                 coding_uncertainty_log,
-                # v4.9 additions (appended at end to match SHEET_HEADERS)
-                sim_fidelity, scen_complexity,
             ]
 
             if len(row_data) != len(SHEET_HEADERS):
