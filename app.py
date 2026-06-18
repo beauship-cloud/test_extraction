@@ -357,12 +357,12 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             enforcement = st.selectbox("CA use enforcement",
                 ["Mandated (participants required to consult CA)",
                  "Encouraged (instructed but not enforced)",
-                 "Available-only (CA placed in environment, no instruction)", "Unclear"],
+                 "Available-only (CA placed in environment, no instruction)", "Unclear", "N/A (Control)"],
                 key="enforcement", index=None, placeholder="— select —")
             fidelity_check = st.selectbox("CA use fidelity check (was actual use monitored?)",
                 ["Yes — quantitative (e.g., observed/timed use)",
                  "Yes — ordinal scale (e.g., 0–5 rating)",
-                 "Yes — qualitative only", "No (not reported)", "Unclear"],
+                 "Yes — qualitative only", "No (not reported)", "Unclear", "N/A (Control)"],
                 key="fidelity_check", index=None, placeholder="— select —")
         with e2:
             fidelity_rate = st.text_input("CA use fidelity rate (%)", key="fidelity_rate")
