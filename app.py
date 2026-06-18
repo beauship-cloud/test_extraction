@@ -6,6 +6,14 @@ Deploy: GitHub → Streamlit Community Cloud.
 Requires:
   - st.secrets["gcp_service_account"] : service-account JSON
   - Google Sheet with header row matching SHEET_HEADERS below
+
+v4.9 changelog (Jun 2026):
+  - NEW columns: "Simulation Fidelity", "Scenario Complexity"
+    Both appended at END of SHEET_HEADERS to preserve existing row alignment
+    in the Google Sheet (same convention as v4.3 additions).
+  - Widgets placed in Tab 1 (Study & Population) under "Simulation Context"
+    section. Both required (★, index=None, placeholder, CRITICAL_FIELDS).
+  - Intended use: heterogeneity / transitivity assessment for NMA.
 """
 
 import streamlit as st
@@ -50,7 +58,6 @@ SHEET_HEADERS = [
     "Timestamp", "Reviewer",
     # Study info
     "Lead Author", "Year", "Study Type", "Country", "Setting", "Scenario",
-    "Simulation Fidelity", "Scenario Complexity",  # <-- v4.9 추가됨
     # Population
     "Total N (all arms)", "N (this arm)", "Unit (individual/team)",
     "Team composition (free text)", "Team interprofessionality",
@@ -88,11 +95,14 @@ SHEET_HEADERS = [
     "ROBINS-I applicable", "ROBINS-I Overall", "ROBINS-I Comments",
     # MERSQI
     "MERSQI total (max 18)", "MERSQI Comments",
-    # Metadata
+    # Metadata (v4.3 appended)
     "Publication type",
     "Author contact status",
     "Adherence outcome direction",
     "Coding uncertainty log",
+    # v4.9 additions (appended at end to preserve existing row alignment)
+    "Simulation Fidelity",
+    "Scenario Complexity",
 ]
 
 # =============================================================================
@@ -314,7 +324,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             reader_mode = st.selectbox("Reader use mode",
                 ["Mandated (required by protocol)", "Encouraged (not mandated)",
                  "Suggested / encouraged", "Discretionary", "Not used", "Unclear"],
-                key="reader_mode", index=None,placeholder="— select —")
+                key="reader_mode", index=None, placeholder="— select —")
         with r2:
             interaction = st.selectbox("Interaction style",
                 ["Read-do", "Do-verify", "Challenge-response", "Self-read silent", "Combined", "N/A (Control)", "Unclear"],
@@ -600,7 +610,6 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             row_data = [
                 datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %Z"), reviewer,
                 author, _s(year), study_type, country, setting, scenario,
-                sim_fidelity, scen_complexity,
                 str(total_n), str(arm_n), unit_random, team_compo,
                 team_inter, exp_level,
                 nma_node, node_rationale, str(arm_no), arm_label, aid_name,
@@ -622,6 +631,8 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 mersqi_total, mersqi_comments,
                 pub_type, author_contact, adh_direction,
                 coding_uncertainty_log,
+                # v4.9 additions (appended at end to match SHEET_HEADERS)
+                sim_fidelity, scen_complexity,
             ]
 
             if len(row_data) != len(SHEET_HEADERS):
