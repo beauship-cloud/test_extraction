@@ -314,7 +314,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             reader_mode = st.selectbox("Reader use mode",
                 ["Mandated (required by protocol)", "Encouraged (not mandated)",
                  "Suggested / encouraged", "Discretionary", "Not used", "Unclear"],
-                key="reader_mode")
+                key="reader_mode", index=None,placeholder="— select —")
         with r2:
             interaction = st.selectbox("Interaction style",
                 ["Read-do", "Do-verify", "Challenge-response", "Self-read silent", "Combined", "N/A (Control)", "Unclear"],
