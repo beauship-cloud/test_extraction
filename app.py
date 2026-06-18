@@ -6,11 +6,6 @@ Deploy: GitHub → Streamlit Community Cloud.
 Requires:
   - st.secrets["gcp_service_account"] : service-account JSON
   - Google Sheet with header row matching SHEET_HEADERS below
-
-v4.9 changelog (Jun 2026):
-  - Heterogeneity variables added (Tab 1): Simulation Fidelity, Scenario Complexity.
-  - Interaction style option added (Tab 3): "Do-verify".
-  - Validation logic and SHEET_HEADERS updated to enforce and map the new variables.
 """
 
 import streamlit as st
@@ -181,7 +176,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             sim_fidelity = st.selectbox(
                 "★ Simulation fidelity [for heterogeneity analysis]",
                 ["High-fidelity scenario", "Low-fidelity / task-based", "Unclear"],
-                help="High-fidelity: immersive environment, full-body manikin with dynamic vitals. Low-fidelity: part-task trainers, table-top, no dynamic vitals.",
+                help="High-fidelity involves full-body manikins with dynamic vitals in realistic environments (e.g., SimMan 3G). Low-fidelity uses part-task trainers or static models with no real-time physiological responses.",
                 key="sim_fidelity",
                 index=None,
                 placeholder="— select —",
@@ -190,7 +185,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             scen_complexity = st.selectbox(
                 "★ Scenario complexity [for heterogeneity analysis]",
                 ["Complex emergency", "Simple task", "Unclear"],
-                help="Complex emergency: requires differential diagnosis or managing multiple concurrent actions (e.g., MH, cardiac arrest). Simple task: linear, routine procedure (e.g., CVC insertion).",
+                help="Complex emergencies require differential diagnoses or managing multiple concurrent actions (e.g., MH, cardiac arrest). Simple tasks involve linear, routine clinical procedures.",
                 key="scen_complexity",
                 index=None,
                 placeholder="— select —",
@@ -322,9 +317,8 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 key="reader_mode")
         with r2:
             interaction = st.selectbox("Interaction style",
-                ["Read-do", "Do-verify", "Challenge-response", "Self-read silent",
-                 "Combined", "N/A (Control)", "Unclear"],
-                help="Read-do: Read first, then act. Do-verify: Perform actions from memory first, then check aid to ensure nothing was missed. Challenge-response: One calls out, another responds.",
+                ["Read-do", "Do-verify", "Challenge-response", "Self-read silent", "Combined", "N/A (Control)", "Unclear"],
+                help="'Read-do' means reading the aid before acting. 'Do-verify' means acting from memory first, then checking the aid to catch missed steps.",
                 key="interaction", index=None, placeholder="— select —")
             strictness = st.selectbox("Strictness of CA workflow",
                 ["Strict (every step must be completed)", "Discretionary (steps can be skipped)",
@@ -606,7 +600,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             row_data = [
                 datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %Z"), reviewer,
                 author, _s(year), study_type, country, setting, scenario,
-                sim_fidelity, scen_complexity, # <--- v4.9 변수
+                sim_fidelity, scen_complexity,
                 str(total_n), str(arm_n), unit_random, team_compo,
                 team_inter, exp_level,
                 nma_node, node_rationale, str(arm_no), arm_label, aid_name,
