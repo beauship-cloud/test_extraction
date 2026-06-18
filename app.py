@@ -11,6 +11,10 @@ v4.9 changelog (Jun 2026):
   - NEW columns: "Simulation Fidelity", "Scenario Complexity"
     Inserted in SHEET_HEADERS at positions 9-10 (immediately after "Scenario"),
     matching the current Google Sheet header layout.
+  - Simulation Fidelity uses 3-tier framework (Low / Mid / High / Unclear)
+    per Maran & Glavin 2003 + INACSL standards. Mid tier explicitly named
+    because most CA simulation studies use scripted-vital manikins (not
+    full physiology engines).
   - Widgets placed in Tab 1 (Study & Population) under "Simulation Context"
     section. Both required (★, index=None, placeholder, CRITICAL_FIELDS).
   - Intended use: heterogeneity / transitivity assessment for NMA.
@@ -184,8 +188,20 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
         with sc1:
             sim_fidelity = st.selectbox(
                 "★ Simulation fidelity [for heterogeneity analysis]",
-                ["High-fidelity scenario", "Low-fidelity / task-based", "Unclear"],
-                help="High-fidelity involves full-body manikins with dynamic vitals in realistic environments (e.g., SimMan 3G). Low-fidelity uses part-task trainers or static models with no real-time physiological responses.",
+                ["Low-fidelity (part-task / paper case / static manikin)",
+                 "Mid-fidelity (full manikin + scripted vitals, no physiology engine)",
+                 "High-fidelity (full manikin + dynamic physiology + realistic environment)",
+                 "Unclear"],
+                help=(
+                    "Three-tier framework (Maran & Glavin 2003; INACSL standards). "
+                    "Code by the SIMULATOR + ENVIRONMENT actually used in the study, "
+                    "not by the study's self-label.\n\n"
+                    "• **Low**: part-task trainer, paper/screen-only case, static manikin — no dynamic response.\n"
+                    "• **Mid**: full manikin (e.g., Resusci Anne, ALS Skillmaster, NeoNatalie) "
+                    "with scripted or operator-driven vitals; monitor displays values but no underlying physiology engine.\n"
+                    "• **High**: full-body manikin (e.g., SimMan 3G, HPS) with dynamic physiology AND realistic clinical environment (sim OR / ED / ICU).\n"
+                    "• **Unclear**: simulator details not reported sufficiently to classify — note in Coding uncertainty log."
+                ),
                 key="sim_fidelity",
                 index=None,
                 placeholder="— select —",
