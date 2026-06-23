@@ -1,23 +1,11 @@
 """
-Cognitive Aids NMA — Data Extraction Tool (v4.9)
-Streamlit app matching extraction form v4.9.
+Cognitive Aids NMA — Data Extraction Tool (v5.0)
+Streamlit app matching extraction form.
 Deploy: GitHub → Streamlit Community Cloud.
 
 Requires:
   - st.secrets["gcp_service_account"] : service-account JSON
   - Google Sheet with header row matching SHEET_HEADERS below
-
-v4.9 changelog (Jun 2026):
-  - NEW columns: "Simulation Fidelity", "Scenario Complexity"
-    Inserted in SHEET_HEADERS at positions 9-10 (immediately after "Scenario"),
-    matching the current Google Sheet header layout.
-  - Simulation Fidelity uses 3-tier framework (Low / Mid / High / Unclear)
-    per Maran & Glavin 2003 + INACSL standards. Mid tier explicitly named
-    because most CA simulation studies use scripted-vital manikins (not
-    full physiology engines).
-  - Widgets placed in Tab 1 (Study & Population) under "Simulation Context"
-    section. Both required (★, index=None, placeholder, CRITICAL_FIELDS).
-  - Intended use: heterogeneity / transitivity assessment for NMA.
 """
 
 import streamlit as st
@@ -35,7 +23,7 @@ TZ = ZoneInfo("America/Toronto")
 # stdlib replacement for scipy.stats.norm.ppf
 _norm_ppf = NormalDist().inv_cdf
 
-st.set_page_config(page_title="Cognitive Aids NMA Extraction v4.9", layout="wide")
+st.set_page_config(page_title="Cognitive Aids NMA Extraction v5.0", layout="wide")
 
 # =============================================================================
 # Google Sheets connection
@@ -57,12 +45,12 @@ worksheet = client.open_by_url(SHEET_URL).sheet1
 
 # =============================================================================
 # Sheet column order — MUST match the header row of your Google Sheet
+# ⚠️ WARNING: Ensure ROBINS-I columns are deleted from the Google Sheet!
 # =============================================================================
 SHEET_HEADERS = [
     "Timestamp", "Reviewer",
     # Study info
     "Lead Author", "Year", "Study Type", "Country", "Setting", "Scenario",
-    # v4.9 additions — simulation context (matches Google Sheet column order)
     "Simulation Fidelity", "Scenario Complexity",
     # Population
     "Total N (all arms)", "N (this arm)", "Unit (individual/team)",
@@ -93,15 +81,13 @@ SHEET_HEADERS = [
     # Outcome 4: Teamwork / NTS (separate analysis)
     "NTS Mean", "NTS SD", "NTS N analyzed",
     "NTS instrument", "NTS comments",
-    # RoB-2 (RCT)
+    # RoB-2 (RCT only)
     "RoB-2 D1 Randomization", "RoB-2 D2 Deviation",
     "RoB-2 D3 Missing data", "RoB-2 D4 Measurement",
     "RoB-2 D5 Selective reporting", "RoB-2 Overall", "RoB-2 Comments",
-    # ROBINS-I (non-randomised)
-    "ROBINS-I applicable", "ROBINS-I Overall", "ROBINS-I Comments",
     # MERSQI
     "MERSQI total (max 18)", "MERSQI Comments",
-    # Metadata (v4.3 appended)
+    # Metadata
     "Publication type",
     "Author contact status",
     "Adherence outcome direction",
@@ -111,7 +97,7 @@ SHEET_HEADERS = [
 # =============================================================================
 # UI
 # =============================================================================
-st.title("🌐 Cognitive Aids NMA — Data Extraction (v4.9)")
+st.title("🌐 Cognitive Aids NMA — Data Extraction (v5.0)")
 st.info(
     """
 **📌 INSTRUCTIONS**
@@ -157,11 +143,10 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 placeholder="— enter year —",
                 key="year",
             )
+            # Updated study types: removed observational and pilot
             study_type = st.selectbox(
                 "Study Type",
-                ["RCT", "Pilot RCT", "Cluster RCT", "Crossover RCT",
-                 "Within-cluster crossover RCT (A-B-A-B)",
-                 "Quasi-experimental", "Observational/Non-randomised", "Other"],
+                ["Parallel RCT", "Crossover RCT", "Cluster RCT", "Other"],
                 key="study_type",
                 index=None,
                 placeholder="— select —",
@@ -181,9 +166,8 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             total_n = st.number_input("Total N (all arms)", min_value=0, value=0, key="total_n")
             arm_n = st.number_input("★ N (this arm)", min_value=0, value=0, key="arm_n")
 
-        # v4.9: Simulation Context (Heterogeneity variables)
         st.markdown("---")
-        st.subheader("Simulation Context (NEW v4.9)")
+        st.subheader("Simulation Context")
         sc1, sc2 = st.columns(2)
         with sc1:
             sim_fidelity = st.selectbox(
@@ -483,7 +467,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
     # -------------------------------------------------------------------------
     with tab5:
         st.subheader("RoB-2 (for RCTs)")
-        rob_levels = ["Low", "Some concerns", "High", "N/A (non-randomised)"]
+        rob_levels = ["Low", "Some concerns", "High"] # Removed N/A option
         rc1, rc2 = st.columns(2)
         with rc1:
             d1 = st.selectbox("D1 — Randomisation process", rob_levels, key="d1", index=None, placeholder="— select —")
@@ -494,19 +478,6 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             d5 = st.selectbox("D5 — Selective reporting", rob_levels, key="d5", index=None, placeholder="— select —")
             rob_overall = st.selectbox("★ Overall RoB-2", rob_levels, key="rob_overall", index=None, placeholder="— select —")
         rob_comments = st.text_area("RoB-2 comments", height=68, key="rob_comments")
-
-        st.markdown("---")
-        st.subheader("ROBINS-I (for non-randomised studies)")
-        ri1, ri2 = st.columns(2)
-        with ri1:
-            robins_applicable = st.selectbox("ROBINS-I applicable?",
-                ["No — study is RCT", "Yes — non-randomised"],
-                key="robins_applicable", index=None, placeholder="— select —")
-        with ri2:
-            robins_overall = st.selectbox("ROBINS-I Overall",
-                ["N/A", "Low", "Moderate", "Serious", "Critical", "No information"],
-                key="robins_overall", index=None, placeholder="— select —")
-        robins_comments = st.text_area("ROBINS-I comments", height=68, key="robins_comments")
 
         st.markdown("---")
         st.subheader("MERSQI (medical education research quality)")
@@ -593,8 +564,6 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             ("RoB-2 D4 Measurement",       d4,                 "Tab 5"),
             ("RoB-2 D5 Selective reporting", d5,               "Tab 5"),
             ("RoB-2 Overall",              rob_overall,        "Tab 5"),
-            ("ROBINS-I applicable",        robins_applicable,  "Tab 5"),
-            ("ROBINS-I Overall",           robins_overall,     "Tab 5"),
             ("MERSQI: Study design",       mersqi_design,      "Tab 5"),
             ("MERSQI: Sampling",           mersqi_sampling,    "Tab 5"),
             ("MERSQI: Type of data",       mersqi_data,        "Tab 5"),
@@ -643,7 +612,6 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 _s(err_events), _s(err_n), err_measure, err_orig, err_comments,
                 _s(nts_mean), _s(nts_sd), _s(nts_n), nts_instrument, nts_comments,
                 d1, d2, d3, d4, d5, rob_overall, rob_comments,
-                robins_applicable, robins_overall, robins_comments,
                 mersqi_total, mersqi_comments,
                 pub_type, author_contact, adh_direction,
                 coding_uncertainty_log,
