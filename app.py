@@ -6,6 +6,18 @@ Deploy: GitHub → Streamlit Community Cloud.
 Requires:
   - st.secrets["gcp_service_account"] : service-account JSON
   - Google Sheet with header row matching SHEET_HEADERS below
+
+v5.0 changes (from prior build):
+  - RoB-2 and MERSQI are now OPTIONAL (assess once per study, normally on Arm 1).
+    They are NOT in the blocking required-field checks, so Arm 2/3 submissions
+    no longer force re-entry of identical study-level ratings.
+  - Error effect-measure field re-labelled to record HOW THE PAPER reported it
+    (RR / OR / raw counts / not reported). Raw events + N remain the true
+    extraction target; pooled measure (RR) is computed at analysis stage.
+  - Median-converter input labels clarified per method (IQR vs range).
+  - Total N / Arm N default to blank (None) instead of 0.
+  - Adherence-direction note: harmonisation to "higher = better" is performed
+    at ANALYSIS stage; here you only record the raw values + their direction.
 """
 
 import streamlit as st
@@ -76,16 +88,16 @@ SHEET_HEADERS = [
     "Time original format", "Time raw median stats",
     "Time conversion method", "Time comments",
     # Outcome 3: Error rate (SECONDARY, dichotomous)
-    "Error events", "Error N analyzed", "Error effect measure",
+    "Error events", "Error N analyzed", "Error measure as reported",
     "Error original reporting", "Error comments",
     # Outcome 4: Teamwork / NTS (separate analysis)
     "NTS Mean", "NTS SD", "NTS N analyzed",
     "NTS instrument", "NTS comments",
-    # RoB-2 (RCT only)
+    # RoB-2 (RCT only — assess once per study, normally on Arm 1)
     "RoB-2 D1 Randomization", "RoB-2 D2 Deviation",
     "RoB-2 D3 Missing data", "RoB-2 D4 Measurement",
     "RoB-2 D5 Selective reporting", "RoB-2 Overall", "RoB-2 Comments",
-    # MERSQI
+    # MERSQI (assess once per study, normally on Arm 1)
     "MERSQI total (max 18)", "MERSQI Comments",
     # Metadata
     "Publication type",
@@ -107,6 +119,7 @@ st.info(
 4. **New study**: refresh browser (F5 / Cmd+R) to clear all fields.
 5. ★ = NMA-critical field (Node, N per arm, Mean/SD/N for primary outcome).
 6. For median-reported outcomes, use the **Median → Mean/SD converter** in Tab 4.
+7. **RoB-2 & MERSQI are study-level** — assess them ONCE per study (normally on Arm 1). They are optional on later arms of the same study; leave blank to avoid duplicate entry.
 """
 )
 
@@ -143,7 +156,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 placeholder="— enter year —",
                 key="year",
             )
-            # Updated study types: removed observational and pilot
+            # Study types: RCT designs only (observational/pilot removed)
             study_type = st.selectbox(
                 "Study Type",
                 ["Parallel RCT", "Crossover RCT", "Cluster RCT", "Other"],
@@ -163,8 +176,10 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             )
             scenario = st.text_input("Scenario (e.g., MH, cardiac arrest)", key="scenario")
         with c3:
-            total_n = st.number_input("Total N (all arms)", min_value=0, value=0, key="total_n")
-            arm_n = st.number_input("★ N (this arm)", min_value=0, value=0, key="arm_n")
+            total_n = st.number_input("Total N (all arms)", min_value=0, value=None,
+                                      step=1, placeholder="— enter N —", key="total_n")
+            arm_n = st.number_input("★ N (this arm)", min_value=0, value=None,
+                                    step=1, placeholder="— enter N —", key="arm_n")
 
         st.markdown("---")
         st.subheader("Simulation Context")
@@ -217,6 +232,8 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 ["Not needed", "Pending decision", "Sent — awaiting reply",
                  "Received — data added", "Sent — no reply / declined"],
                 key="author_contact",
+                index=None,
+                placeholder="— select —",
             )
 
         st.markdown("---")
@@ -359,23 +376,31 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
     with tab4:
         with st.expander("💡 Median → Mean/SD Converter"):
             cvt_method = st.radio("Pick reported statistic:",
-                ["Wan 2014 — median + Q1 + Q3", "Hozo 2005 — median + min + max",
-                 "Luo 2018 — median + (min, max)"],
+                ["Wan 2014 — median + Q1 + Q3 (IQR)",
+                 "Hozo 2005 — median + min + max (range)",
+                 "Luo 2018 — median + min + max (range)"],
                 key="cvt_method")
+            # Dynamic labels per method
+            if cvt_method.startswith("Wan"):
+                lo_label, hi_label = "Q1 (lower quartile)", "Q3 (upper quartile)"
+            else:
+                lo_label, hi_label = "min", "max"
             cv1, cv2, cv3, cv4 = st.columns(4)
             with cv1: cv_med = st.number_input("Median", value=0.0, format="%.4f", key="cv_med")
-            with cv2: cv_a = st.number_input("Q1 / min", value=0.0, format="%.4f", key="cv_a")
-            with cv3: cv_b = st.number_input("Q3 / max", value=0.0, format="%.4f", key="cv_b")
+            with cv2: cv_a = st.number_input(lo_label, value=0.0, format="%.4f", key="cv_a")
+            with cv3: cv_b = st.number_input(hi_label, value=0.0, format="%.4f", key="cv_b")
             with cv4: cv_n = st.number_input("n", min_value=1, value=10, key="cv_n")
 
             if st.form_submit_button("📐 Compute"):
                 try:
                     if cvt_method.startswith("Wan"):
+                        # Wan 2014, median + IQR (Eq. 14 mean, Eq. 16 SD)
                         mean_est = (cv_a + cv_med + cv_b) / 3
                         xi = 2 * _norm_ppf((0.75 * cv_n - 0.125) / (cv_n + 0.25))
                         sd_est = (cv_b - cv_a) / xi
-                        method_used = f"Wan 2014 (η={xi:.3f})"
+                        method_used = f"Wan 2014 IQR (η={xi:.3f})"
                     elif cvt_method.startswith("Hozo"):
+                        # Hozo 2005, median + range
                         mean_est = (cv_a + 2 * cv_med + cv_b) / 4
                         if cv_n <= 15:
                             sd_est = (cv_b - cv_a) / (2 * math.sqrt(3))
@@ -388,17 +413,26 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                             sd_rule = "n>70: range/6"
                         method_used = f"Hozo 2005 ({sd_rule})"
                     else:
+                        # Luo 2018 mean (range) + Hozo 2005 SD (range) — consistent range basis
                         w = 4 / (4 + cv_n ** 0.75)
                         mean_est = w * (cv_a + cv_b) / 2 + (1 - w) * cv_med
-                        xi = 2 * _norm_ppf((0.75 * cv_n - 0.125) / (cv_n + 0.25))
-                        sd_est = (cv_b - cv_a) / xi
-                        method_used = "Luo 2018 mean + Wan 2014 SD"
+                        if cv_n <= 15:
+                            sd_est = (cv_b - cv_a) / (2 * math.sqrt(3))
+                            sd_rule = "n≤15: range/(2√3)"
+                        elif cv_n <= 70:
+                            sd_est = (cv_b - cv_a) / 4
+                            sd_rule = "15<n≤70: range/4"
+                        else:
+                            sd_est = (cv_b - cv_a) / 6
+                            sd_rule = "n>70: range/6"
+                        method_used = f"Luo 2018 mean + Hozo 2005 SD ({sd_rule})"
                     st.success(f"**Mean ≈ {mean_est:.3f} | SD ≈ {sd_est:.3f}** ({method_used})")
                 except Exception as e:
                     st.error(f"Calc error: {e}")
 
         st.markdown("---")
         st.markdown("### Outcome 1 — Adherence / task completion (★ PRIMARY, continuous, SMD)")
+        st.caption("Record the RAW values as reported. Direction harmonisation (so higher = better) is done at the ANALYSIS stage, not here — you only record the value + which direction it represents.")
         adh_direction = st.radio("★ Outcome direction",
             ["Higher = better (e.g., % steps completed, checklist score)",
              "Lower = better (e.g., % steps missed, failure rate)",
@@ -442,15 +476,18 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
         time_comments = st.text_input("Time comments", key="time_comments")
 
         st.markdown("---")
-        st.markdown("### Outcome 3 — Error rate (SECONDARY, dichotomous, RR)")
+        st.markdown("### Outcome 3 — Error rate (SECONDARY, dichotomous)")
+        st.caption("Extract raw EVENTS + N. The pooled effect measure for the NMA is RR, computed from events/N at the analysis stage. The field below only records HOW THE PAPER reported it (for reference / when raw counts are unavailable).")
         e3c1, e3c2, e3c3 = st.columns(3)
-        with e3c1: err_events = st.number_input("Events (this arm)", value=None, min_value=0, step=1, key="err_events")
-        with e3c2: err_n = st.number_input("N analyzed (this arm)", value=None, min_value=0, step=1, key="err_n")
+        with e3c1: err_events = st.number_input("★ Events (this arm)", value=None, min_value=0, step=1, key="err_events")
+        with e3c2: err_n = st.number_input("★ N analyzed (this arm)", value=None, min_value=0, step=1, key="err_n")
         with e3c3:
-            err_measure = st.selectbox("Effect measure",
-                ["RR (primary)", "OR (secondary)", "Other", "Not reported"],
+            err_measure = st.selectbox("Measure as reported in paper",
+                ["Raw counts / events given", "RR reported", "OR reported",
+                 "Other relative measure", "Not reported"],
+                help="What did the paper itself report? If raw counts/events are available, prefer those (enter Events + N on the left); we compute RR ourselves. Record OR only if that is all the paper provides.",
                 key="err_measure", index=None, placeholder="— select —")
-        err_orig = st.text_input("Original reporting", key="err_orig")
+        err_orig = st.text_input("Original reporting (free text — e.g., 'OR 2.3 (1.1–4.8)')", key="err_orig")
         err_comments = st.text_input("Error comments", key="err_comments")
 
         st.markdown("---")
@@ -463,11 +500,12 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
         nts_comments = st.text_input("NTS comments", key="nts_comments")
 
     # -------------------------------------------------------------------------
-    # TAB 5 — RoB & QUALITY
+    # TAB 5 — RoB & QUALITY  (study-level — assess once per study, normally Arm 1)
     # -------------------------------------------------------------------------
     with tab5:
+        st.info("ℹ️ **RoB-2 and MERSQI are STUDY-LEVEL.** Assess them once per study (normally on Arm 1). On later arms of the same study you may leave these blank — they are optional and will not block submission.")
         st.subheader("RoB-2 (for RCTs)")
-        rob_levels = ["Low", "Some concerns", "High"] # Removed N/A option
+        rob_levels = ["Low", "Some concerns", "High"]
         rc1, rc2 = st.columns(2)
         with rc1:
             d1 = st.selectbox("D1 — Randomisation process", rob_levels, key="d1", index=None, placeholder="— select —")
@@ -476,7 +514,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
         with rc2:
             d4 = st.selectbox("D4 — Measurement of outcome", rob_levels, key="d4", index=None, placeholder="— select —")
             d5 = st.selectbox("D5 — Selective reporting", rob_levels, key="d5", index=None, placeholder="— select —")
-            rob_overall = st.selectbox("★ Overall RoB-2", rob_levels, key="rob_overall", index=None, placeholder="— select —")
+            rob_overall = st.selectbox("Overall RoB-2", rob_levels, key="rob_overall", index=None, placeholder="— select —")
         rob_comments = st.text_area("RoB-2 comments", height=68, key="rob_comments")
 
         st.markdown("---")
@@ -516,7 +554,8 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
         if any(s is None for s in _mersqi_subscores):
             mersqi_total = ""
             _n_done = sum(1 for s in _mersqi_subscores if s is not None)
-            st.warning(f"⚠️ MERSQI incomplete: {_n_done}/6 domains selected.")
+            if _n_done > 0:
+                st.warning(f"⚠️ MERSQI partial: {_n_done}/6 domains selected. Complete all 6 (study-level) or leave all blank on duplicate arms.")
         else:
             mersqi_total_num = sum(s[0] for s in _mersqi_subscores)
             mersqi_total = f"{mersqi_total_num:.1f}"
@@ -536,6 +575,8 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
         if not author.strip(): missing_text.append("Lead Author (Tab 1)")
         if year is None: missing_text.append("Publication Year (Tab 1)")
 
+        # Required per-ARM fields (study/intervention/implementation/outcome-direction).
+        # RoB-2 and MERSQI are STUDY-LEVEL and intentionally NOT included here.
         CRITICAL_FIELDS = [
             ("Study type",                 study_type,         "Tab 1"),
             ("Setting",                    setting,            "Tab 1"),
@@ -558,20 +599,8 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             ("Enforcement",                enforcement,        "Tab 3"),
             ("Fidelity check",             fidelity_check,     "Tab 3"),
             ("Adherence outcome direction", adh_direction,     "Tab 4"),
-            ("RoB-2 D1 Randomization",     d1,                 "Tab 5"),
-            ("RoB-2 D2 Deviation",         d2,                 "Tab 5"),
-            ("RoB-2 D3 Missing data",      d3,                 "Tab 5"),
-            ("RoB-2 D4 Measurement",       d4,                 "Tab 5"),
-            ("RoB-2 D5 Selective reporting", d5,               "Tab 5"),
-            ("RoB-2 Overall",              rob_overall,        "Tab 5"),
-            ("MERSQI: Study design",       mersqi_design,      "Tab 5"),
-            ("MERSQI: Sampling",           mersqi_sampling,    "Tab 5"),
-            ("MERSQI: Type of data",       mersqi_data,        "Tab 5"),
-            ("MERSQI: Validity",           mersqi_validity,    "Tab 5"),
-            ("MERSQI: Analysis",           mersqi_analysis,    "Tab 5"),
-            ("MERSQI: Outcomes",           mersqi_outcomes,    "Tab 5"),
         ]
-        
+
         missing_select = [f"• **{name}** ({tab})" for name, val, tab in CRITICAL_FIELDS if val is None]
 
         conditional_missing = []
@@ -583,7 +612,13 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             if time_orig is None: conditional_missing.append("• **Time original format** (Tab 4)")
             if time_conv is None: conditional_missing.append("• **Time conversion method** (Tab 4)")
         if err_events is not None or err_n is not None:
-            if err_measure is None: conditional_missing.append("• **Error effect measure** (Tab 4)")
+            if err_measure is None: conditional_missing.append("• **Error measure as reported** (Tab 4)")
+
+        # MERSQI partial-entry guard: if SOME but not all 6 domains entered, block
+        # (prevents half-filled study-level scores). All-blank is allowed (duplicate arm).
+        _n_mersqi = sum(1 for s in _mersqi_subscores if s is not None)
+        if 0 < _n_mersqi < 6:
+            conditional_missing.append("• **MERSQI** — complete all 6 domains or leave all blank (Tab 5)")
 
         if missing_text or missing_select or conditional_missing:
             err_lines = ["❌ **Cannot submit — required fields missing:**"]
@@ -595,7 +630,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %Z"), reviewer,
                 author, _s(year), study_type, country, setting, scenario,
                 sim_fidelity, scen_complexity,
-                str(total_n), str(arm_n), unit_random, team_compo,
+                _s(total_n), _s(arm_n), unit_random, team_compo,
                 team_inter, exp_level,
                 nma_node, node_rationale, str(arm_no), arm_label, aid_name,
                 medium, ca_type, ca_logic,
@@ -606,14 +641,14 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 enforcement, fidelity_check, fidelity_rate,
                 implementation_narrative,
                 _s(adh_mean), _s(adh_sd), _s(adh_n),
-                adh_orig, adh_raw, adh_conv, adh_kp, adh_comments,
+                _s(adh_orig), adh_raw, _s(adh_conv), _s(adh_kp), adh_comments,
                 _s(time_mean), _s(time_sd), _s(time_n),
-                time_orig, time_raw, time_conv, time_comments,
-                _s(err_events), _s(err_n), err_measure, err_orig, err_comments,
+                _s(time_orig), time_raw, _s(time_conv), time_comments,
+                _s(err_events), _s(err_n), _s(err_measure), err_orig, err_comments,
                 _s(nts_mean), _s(nts_sd), _s(nts_n), nts_instrument, nts_comments,
-                d1, d2, d3, d4, d5, rob_overall, rob_comments,
+                _s(d1), _s(d2), _s(d3), _s(d4), _s(d5), _s(rob_overall), rob_comments,
                 mersqi_total, mersqi_comments,
-                pub_type, author_contact, adh_direction,
+                pub_type, _s(author_contact), adh_direction,
                 coding_uncertainty_log,
             ]
 
@@ -624,6 +659,6 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                     worksheet.append_row(row_data)
                     st.success(f"✅ Saved: **{author} ({year}) — Arm {arm_no}: {arm_label}** by {reviewer}")
                     st.balloons()
-                    st.warning("**⚠️ Before clicking Submit again:**\n- **NEXT ARM**: update Arm No., Label, Node, Outcomes.\n- **NEW study**: refresh browser (F5) to clear.")
+                    st.warning("**⚠️ Before clicking Submit again:**\n- **NEXT ARM**: update Arm No., Label, Node, Outcomes. (RoB-2/MERSQI already recorded for this study — leave blank.)\n- **NEW study**: refresh browser (F5) to clear.")
                 except Exception as e:
                     st.error(f"❌ Could not write to sheet: {e}")
