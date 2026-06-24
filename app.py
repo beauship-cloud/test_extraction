@@ -18,6 +18,12 @@ v5.0 changes (from prior build):
   - Total N / Arm N default to blank (None) instead of 0.
   - Adherence-direction note: harmonisation to "higher = better" is performed
     at ANALYSIS stage; here you only record the raw values + their direction.
+  - OUTCOME GATES: each of the 4 outcomes (Adherence, Time, Error, NTS) now has
+    a required "... reported?" selectbox with options
+    [Reported / Not measured / Measured – not extractable / Unclear].
+    This distinguishes a TRUE ABSENCE in the source from a blank (not-yet-entered).
+    Sub-fields are only enforced when the gate == "Reported".
+    Adherence outcome direction is now conditional on the Adherence gate too.
 """
 
 import streamlit as st
@@ -58,6 +64,13 @@ worksheet = client.open_by_url(SHEET_URL).sheet1
 # =============================================================================
 # Sheet column order — MUST match the header row of your Google Sheet
 # ⚠️ WARNING: Ensure ROBINS-I columns are deleted from the Google Sheet!
+# ⚠️ v5.0 gate update: insert FOUR new header columns, each immediately to the
+#    LEFT of its outcome block's first field:
+#      "Adherence reported?"  before  "Adherence Mean"
+#      "Time reported?"       before  "Time Mean"
+#      "Error reported?"      before  "Error events"
+#      "NTS reported?"        before  "NTS Mean"
+#    Total columns: 75 -> 79.
 # =============================================================================
 SHEET_HEADERS = [
     "Timestamp", "Reviewer",
@@ -79,18 +92,22 @@ SHEET_HEADERS = [
     "CA use enforcement", "CA use fidelity check", "CA use fidelity rate (%)",
     "Implementation narrative",
     # Outcome 1: Adherence (PRIMARY, continuous)
+    "Adherence reported?",
     "Adherence Mean", "Adherence SD", "Adherence N analyzed",
     "Adherence original format", "Adherence raw median stats",
     "Adherence conversion method", "Adherence Kirkpatrick level",
     "Adherence comments",
     # Outcome 2: Time to critical action (SECONDARY, continuous)
+    "Time reported?",
     "Time Mean", "Time SD", "Time N analyzed",
     "Time original format", "Time raw median stats",
     "Time conversion method", "Time comments",
     # Outcome 3: Error rate (SECONDARY, dichotomous)
+    "Error reported?",
     "Error events", "Error N analyzed", "Error measure as reported",
     "Error original reporting", "Error comments",
     # Outcome 4: Teamwork / NTS (separate analysis)
+    "NTS reported?",
     "NTS Mean", "NTS SD", "NTS N analyzed",
     "NTS instrument", "NTS comments",
     # RoB-2 (RCT only — assess once per study, normally on Arm 1)
@@ -106,6 +123,9 @@ SHEET_HEADERS = [
     "Coding uncertainty log",
 ]
 
+# Shared option list for the four outcome gates
+GATE_OPTS = ["Reported", "Not measured", "Measured – not extractable", "Unclear"]
+
 # =============================================================================
 # UI
 # =============================================================================
@@ -120,6 +140,7 @@ st.info(
 5. ★ = NMA-critical field (Node, N per arm, Mean/SD/N for primary outcome).
 6. For median-reported outcomes, use the **Median → Mean/SD converter** in Tab 4.
 7. **RoB-2 & MERSQI are study-level** — assess them ONCE per study (normally on Arm 1). They are optional on later arms of the same study; leave blank to avoid duplicate entry.
+8. **Outcome gates** (Tab 4): for EACH outcome pick whether it is *Reported / Not measured / Measured–not extractable / Unclear*. Sub-fields are only required when you pick **Reported**. This records a TRUE absence instead of an ambiguous blank.
 """
 )
 
@@ -432,6 +453,12 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
 
         st.markdown("---")
         st.markdown("### Outcome 1 — Adherence / task completion (★ PRIMARY, continuous, SMD)")
+        adh_gate = st.selectbox("★ Adherence reported?", GATE_OPTS,
+            help="Pick 'Reported' only if mean/SD/N (or convertible median stats) are available. "
+                 "'Not measured' = study did not assess this outcome. "
+                 "'Measured – not extractable' = assessed but usable numbers not given (→ author-contact candidate). "
+                 "'Unclear' = cannot tell from the text.",
+            key="adh_gate", index=None, placeholder="— select —")
         st.caption("Record the RAW values as reported. Direction harmonisation (so higher = better) is done at the ANALYSIS stage, not here — you only record the value + which direction it represents.")
         adh_direction = st.radio("★ Outcome direction",
             ["Higher = better (e.g., % steps completed, checklist score)",
@@ -459,6 +486,8 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
 
         st.markdown("---")
         st.markdown("### Outcome 2 — Time to first critical action (SECONDARY, continuous)")
+        time_gate = st.selectbox("★ Time reported?", GATE_OPTS,
+            key="time_gate", index=None, placeholder="— select —")
         o2c1, o2c2, o2c3 = st.columns(3)
         with o2c1: time_mean = st.number_input("Mean (seconds)", value=None, format="%.4f", key="time_mean")
         with o2c2: time_sd = st.number_input("SD (seconds)", value=None, min_value=0.0, format="%.4f", key="time_sd")
@@ -477,6 +506,8 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
 
         st.markdown("---")
         st.markdown("### Outcome 3 — Error rate (SECONDARY, dichotomous)")
+        err_gate = st.selectbox("★ Error reported?", GATE_OPTS,
+            key="err_gate", index=None, placeholder="— select —")
         st.caption("Extract raw EVENTS + N. The pooled effect measure for the NMA is RR, computed from events/N at the analysis stage. The field below only records HOW THE PAPER reported it (for reference / when raw counts are unavailable).")
         e3c1, e3c2, e3c3 = st.columns(3)
         with e3c1: err_events = st.number_input("★ Events (this arm)", value=None, min_value=0, step=1, key="err_events")
@@ -492,6 +523,8 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
 
         st.markdown("---")
         st.markdown("### Outcome 4 — Teamwork / NTS (separate analysis)")
+        nts_gate = st.selectbox("★ NTS reported?", GATE_OPTS,
+            key="nts_gate", index=None, placeholder="— select —")
         nts1, nts2, nts3 = st.columns(3)
         with nts1: nts_mean = st.number_input("Mean", value=None, format="%.4f", key="nts_mean")
         with nts2: nts_sd = st.number_input("SD", value=None, min_value=0.0, format="%.4f", key="nts_sd")
@@ -575,7 +608,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
         if not author.strip(): missing_text.append("Lead Author (Tab 1)")
         if year is None: missing_text.append("Publication Year (Tab 1)")
 
-        # Required per-ARM fields (study/intervention/implementation/outcome-direction).
+        # Required per-ARM fields (study/intervention/implementation/outcome-gates).
         # RoB-2 and MERSQI are STUDY-LEVEL and intentionally NOT included here.
         CRITICAL_FIELDS = [
             ("Study type",                 study_type,         "Tab 1"),
@@ -598,21 +631,35 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             ("Strictness",                 strictness,         "Tab 3"),
             ("Enforcement",                enforcement,        "Tab 3"),
             ("Fidelity check",             fidelity_check,     "Tab 3"),
-            ("Adherence outcome direction", adh_direction,     "Tab 4"),
+            # Outcome gates — all four required every arm
+            ("Adherence reported?",        adh_gate,           "Tab 4"),
+            ("Time reported?",             time_gate,          "Tab 4"),
+            ("Error reported?",            err_gate,           "Tab 4"),
+            ("NTS reported?",              nts_gate,           "Tab 4"),
         ]
+        # NOTE: "Adherence outcome direction" is no longer always-required; it is
+        # now conditional on the Adherence gate == "Reported" (see below).
 
         missing_select = [f"• **{name}** ({tab})" for name, val, tab in CRITICAL_FIELDS if val is None]
 
         conditional_missing = []
-        if adh_mean is not None or adh_sd is not None or adh_n is not None:
+        # Adherence: enforce sub-fields only when the outcome is actually reported
+        if adh_gate == "Reported":
+            if adh_direction is None: conditional_missing.append("• **Adherence outcome direction** (Tab 4)")
+            if adh_mean is None: conditional_missing.append("• **Adherence Mean** (Tab 4)")
+            if adh_sd is None:   conditional_missing.append("• **Adherence SD** (Tab 4)")
+            if adh_n is None:    conditional_missing.append("• **Adherence N analyzed** (Tab 4)")
             if adh_orig is None: conditional_missing.append("• **Adherence original format** (Tab 4)")
             if adh_conv is None: conditional_missing.append("• **Adherence conversion method** (Tab 4)")
-            if adh_kp is None: conditional_missing.append("• **Adherence Kirkpatrick level** (Tab 4)")
-        if time_mean is not None or time_sd is not None or time_n is not None:
+            if adh_kp is None:   conditional_missing.append("• **Adherence Kirkpatrick level** (Tab 4)")
+        # Time: enforce reporting format + conversion only when reported
+        if time_gate == "Reported":
             if time_orig is None: conditional_missing.append("• **Time original format** (Tab 4)")
             if time_conv is None: conditional_missing.append("• **Time conversion method** (Tab 4)")
-        if err_events is not None or err_n is not None:
+        # Error: enforce 'measure as reported' only when reported
+        if err_gate == "Reported":
             if err_measure is None: conditional_missing.append("• **Error measure as reported** (Tab 4)")
+        # NTS: gate is required but no sub-fields are forced (mean/SD/instrument left to reviewer)
 
         # MERSQI partial-entry guard: if SOME but not all 6 domains entered, block
         # (prevents half-filled study-level scores). All-blank is allowed (duplicate arm).
@@ -640,11 +687,15 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 interaction, strictness,
                 enforcement, fidelity_check, fidelity_rate,
                 implementation_narrative,
+                _s(adh_gate),
                 _s(adh_mean), _s(adh_sd), _s(adh_n),
                 _s(adh_orig), adh_raw, _s(adh_conv), _s(adh_kp), adh_comments,
+                _s(time_gate),
                 _s(time_mean), _s(time_sd), _s(time_n),
                 _s(time_orig), time_raw, _s(time_conv), time_comments,
+                _s(err_gate),
                 _s(err_events), _s(err_n), _s(err_measure), err_orig, err_comments,
+                _s(nts_gate),
                 _s(nts_mean), _s(nts_sd), _s(nts_n), nts_instrument, nts_comments,
                 _s(d1), _s(d2), _s(d3), _s(d4), _s(d5), _s(rob_overall), rob_comments,
                 mersqi_total, mersqi_comments,
