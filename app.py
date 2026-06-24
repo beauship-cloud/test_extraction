@@ -1,11 +1,27 @@
 """
-Cognitive Aids NMA — Data Extraction Tool (v5.0)
+Cognitive Aids NMA — Data Extraction Tool (v5.1)
 Streamlit app matching extraction form.
 Deploy: GitHub → Streamlit Community Cloud.
 
 Requires:
   - st.secrets["gcp_service_account"] : service-account JSON
   - Google Sheet with header row matching SHEET_HEADERS below
+
+v5.1 changes (from v5.0):
+  - FIDELITY-RATE GATE: "CA use fidelity rate (%)" is now gated by the existing
+    "CA use fidelity check" field, NOT by a new 5th gate column.
+      * If fidelity check == "Yes — quantitative", a rate is REQUIRED (a blank is
+        treated as missing → blocks submission). A quantitative check implies the
+        source reported a number, so a blank there is an unrecorded value.
+      * For any other check value (ordinal / qualitative / No / Unclear / N-A),
+        the rate is left blank and that blank is EXPLAINED by the check field —
+        i.e. a true "no quantitative fidelity measure in source", not a forgotten
+        entry. This resolves the blank-vs-absent ambiguity WITHOUT adding a column.
+    Validation-time only (consistent with the four outcome gates), because widgets
+    inside st.form do not re-render on change. SHEET_HEADERS unchanged (still 79).
+  - Robustness: "Adherence outcome direction" is now written via _s() so a None
+    (when the Adherence gate != "Reported") is stored as "" like every other gated
+    field, instead of a raw Python None.
 
 v5.0 changes (from prior build):
   - RoB-2 and MERSQI are now OPTIONAL (assess once per study, normally on Arm 1).
@@ -41,7 +57,7 @@ TZ = ZoneInfo("America/Toronto")
 # stdlib replacement for scipy.stats.norm.ppf
 _norm_ppf = NormalDist().inv_cdf
 
-st.set_page_config(page_title="Cognitive Aids NMA Extraction v5.0", layout="wide")
+st.set_page_config(page_title="Cognitive Aids NMA Extraction v5.1", layout="wide")
 
 # =============================================================================
 # Google Sheets connection
@@ -71,6 +87,8 @@ worksheet = client.open_by_url(SHEET_URL).sheet1
 #      "Error reported?"      before  "Error events"
 #      "NTS reported?"        before  "NTS Mean"
 #    Total columns: 75 -> 79.
+# ⚠️ v5.1: NO new columns. The fidelity-rate gate is validation-only and reuses
+#    the existing "CA use fidelity check" field. Column count stays 79.
 # =============================================================================
 SHEET_HEADERS = [
     "Timestamp", "Reviewer",
@@ -129,7 +147,7 @@ GATE_OPTS = ["Reported", "Not measured", "Measured – not extractable", "Unclea
 # =============================================================================
 # UI
 # =============================================================================
-st.title("🌐 Cognitive Aids NMA — Data Extraction (v5.0)")
+st.title("🌐 Cognitive Aids NMA — Data Extraction (v5.1)")
 st.info(
     """
 **📌 INSTRUCTIONS**
@@ -141,6 +159,7 @@ st.info(
 6. For median-reported outcomes, use the **Median → Mean/SD converter** in Tab 4.
 7. **RoB-2 & MERSQI are study-level** — assess them ONCE per study (normally on Arm 1). They are optional on later arms of the same study; leave blank to avoid duplicate entry.
 8. **Outcome gates** (Tab 4): for EACH outcome pick whether it is *Reported / Not measured / Measured–not extractable / Unclear*. Sub-fields are only required when you pick **Reported**. This records a TRUE absence instead of an ambiguous blank.
+9. **Fidelity rate** (Tab 3): fill *CA use fidelity rate (%)* ONLY when *CA use fidelity check* = "Yes — quantitative" (then it is required). For any other check value, leave it blank — the check field already records why there is no rate.
 """
 )
 
@@ -387,7 +406,16 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                  "Yes — qualitative only", "No (not reported)", "Unclear", "N/A (Control)"],
                 key="fidelity_check", index=None, placeholder="— select —")
         with e2:
-            fidelity_rate = st.text_input("CA use fidelity rate (%)", key="fidelity_rate")
+            fidelity_rate = st.text_input(
+                "CA use fidelity rate (%)",
+                help="Gated by 'CA use fidelity check'. Enter the observed % CA use ONLY when "
+                     "the check = 'Yes — quantitative' (then it is required). For any other "
+                     "check value (ordinal / qualitative / No / Unclear / N-A), leave blank — "
+                     "the blank is explained by the check field, not an unrecorded value.",
+                key="fidelity_rate",
+            )
+            st.caption("Required only if fidelity check = 'Yes — quantitative'; otherwise a "
+                       "blank is a true 'no quantitative measure in source', not an unfilled field.")
 
         implementation_narrative = st.text_area("Implementation narrative", height=100, key="implementation_narrative")
 
@@ -661,6 +689,15 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             if err_measure is None: conditional_missing.append("• **Error measure as reported** (Tab 4)")
         # NTS: gate is required but no sub-fields are forced (mean/SD/instrument left to reviewer)
 
+        # Fidelity-rate gate (v5.1): a rate is required only when the fidelity check is
+        # quantitative. This disambiguates a blank (true N/A vs unrecorded) WITHOUT a
+        # 5th gate column — the check field carries the "is there a measure?" signal.
+        if (fidelity_check == "Yes — quantitative (e.g., observed/timed use)"
+                and not fidelity_rate.strip()):
+            conditional_missing.append(
+                "• **CA use fidelity rate (%)** — required because fidelity check = "
+                "'Yes — quantitative' (Tab 3)")
+
         # MERSQI partial-entry guard: if SOME but not all 6 domains entered, block
         # (prevents half-filled study-level scores). All-blank is allowed (duplicate arm).
         _n_mersqi = sum(1 for s in _mersqi_subscores if s is not None)
@@ -699,7 +736,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 _s(nts_mean), _s(nts_sd), _s(nts_n), nts_instrument, nts_comments,
                 _s(d1), _s(d2), _s(d3), _s(d4), _s(d5), _s(rob_overall), rob_comments,
                 mersqi_total, mersqi_comments,
-                pub_type, _s(author_contact), adh_direction,
+                pub_type, _s(author_contact), _s(adh_direction),
                 coding_uncertainty_log,
             ]
 
