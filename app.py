@@ -1,11 +1,25 @@
 """
-Cognitive Aids NMA — Data Extraction Tool (v5.1)
+Cognitive Aids NMA — Data Extraction Tool (v5.2)
 Streamlit app matching extraction form.
 Deploy: GitHub → Streamlit Community Cloud.
 
 Requires:
   - st.secrets["gcp_service_account"] : service-account JSON
   - Google Sheet with header row matching SHEET_HEADERS below
+
+v5.2 changes (from v5.1):
+  - MERGE KEYS for 4-reviewer dual independent extraction:
+      * "Study ID (Covidence)" — the Covidence record number (e.g. 9405), REQUIRED.
+        This is the stable per-study key reviewers read straight off Covidence; it
+        removes author/year ambiguity (Siebert x4, St Pierre x2, Marshall x2, etc.)
+        when two reviewers' rows are reconciled later.
+      * "Phase" — Calibration / Main, REQUIRED. Calibration papers are re-extracted
+        in Main, so the same reviewer enters a study twice; Phase keeps them apart.
+    Both inserted right after "Reviewer" (sheet columns 3 and 4). SHEET_HEADERS 79 -> 81.
+    Reconciliation / IRR merge key = Study ID + Phase + Reviewer + Arm No.
+  - Reviewer field can be locked to a fixed pick-list: set REVIEWERS = [...4 names...]
+    near the top to make it a dropdown (prevents "A"/"a"/"Reviewer A" drift that breaks
+    merging). Left empty ([]), Reviewer stays a free-text box (unchanged behaviour).
 
 v5.1 changes (from v5.0):
   - FIDELITY-RATE GATE: "CA use fidelity rate (%)" is now gated by the existing
@@ -57,7 +71,7 @@ TZ = ZoneInfo("America/Toronto")
 # stdlib replacement for scipy.stats.norm.ppf
 _norm_ppf = NormalDist().inv_cdf
 
-st.set_page_config(page_title="Cognitive Aids NMA Extraction v5.1", layout="wide")
+st.set_page_config(page_title="Cognitive Aids NMA Extraction v5.2", layout="wide")
 
 # =============================================================================
 # Google Sheets connection
@@ -89,9 +103,16 @@ worksheet = client.open_by_url(SHEET_URL).sheet1
 #    Total columns: 75 -> 79.
 # ⚠️ v5.1: NO new columns. The fidelity-rate gate is validation-only and reuses
 #    the existing "CA use fidelity check" field. Column count stays 79.
+# ⚠️ v5.2: insert TWO new header columns immediately AFTER "Reviewer" (sheet cols
+#    C and D), shifting everything else right:
+#      "Study ID (Covidence)"   (col C)
+#      "Phase"                  (col D)
+#    Do this BEFORE any extraction starts. Total columns: 79 -> 81.
 # =============================================================================
 SHEET_HEADERS = [
     "Timestamp", "Reviewer",
+    # Merge keys (v5.2) — Covidence record # + extraction phase
+    "Study ID (Covidence)", "Phase",
     # Study info
     "Lead Author", "Year", "Study Type", "Country", "Setting", "Scenario",
     "Simulation Fidelity", "Scenario Complexity",
@@ -144,14 +165,20 @@ SHEET_HEADERS = [
 # Shared option list for the four outcome gates
 GATE_OPTS = ["Reported", "Not measured", "Measured – not extractable", "Unclear"]
 
+# Optional fixed reviewer pick-list (v5.2). Fill in the 4 reviewer names to turn the
+# Reviewer field into a dropdown — this prevents name-spelling drift ("A"/"a"/
+# "Reviewer A") that would break the later merge. Leave empty ([]) to keep Reviewer
+# as a free-text box (unchanged from v5.1).
+REVIEWERS = []  # e.g. ["Angelique", "Reviewer B", "Reviewer C", "Reviewer D"]
+
 # =============================================================================
 # UI
 # =============================================================================
-st.title("🌐 Cognitive Aids NMA — Data Extraction (v5.1)")
+st.title("🌐 Cognitive Aids NMA — Data Extraction (v5.2)")
 st.info(
     """
 **📌 INSTRUCTIONS**
-1. Enter your name in **Reviewer Name** (Tab 1) — required.
+1. **Reviewer / Study ID / Phase** (Tab 1) — all required. **Study ID = the Covidence record number** for this paper (e.g. 9405); type it exactly as Covidence shows it. **Phase** = *Calibration* (the shared alignment papers) or *Main* (the full extraction).
 2. Extract data for **ONE arm per submission**.
 3. **Multi-arm study**: after submitting arm 1, just update Arm No., Arm Label, NMA Node, and Outcomes → Submit again. Other fields stay.
 4. **New study**: refresh browser (F5 / Cmd+R) to clear all fields.
@@ -181,8 +208,28 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
     # TAB 1 — STUDY & POPULATION
     # -------------------------------------------------------------------------
     with tab1:
-        st.subheader("Reviewer")
-        reviewer = st.text_input("Reviewer Name ★", key="reviewer")
+        st.subheader("Reviewer & Study key")
+        rv1, rv2, rv3 = st.columns(3)
+        with rv1:
+            if REVIEWERS:
+                reviewer = st.selectbox("Reviewer ★", REVIEWERS, key="reviewer",
+                    index=None, placeholder="— select your name —")
+            else:
+                reviewer = st.text_input("Reviewer Name ★", key="reviewer")
+        with rv2:
+            study_id = st.number_input(
+                "Study ID (Covidence) ★", min_value=1, value=None, step=1,
+                placeholder="— Covidence # —", key="study_id",
+                help="The Covidence record number shown for this study (e.g. 9405). "
+                     "This is the MERGE KEY — type it exactly as Covidence shows it. "
+                     "It stays the same across all arms of the study.")
+        with rv3:
+            phase = st.selectbox(
+                "Phase ★", ["Calibration", "Main"], key="phase",
+                index=None, placeholder="— select —",
+                help="Calibration = the shared 3–5 alignment papers (all reviewers). "
+                     "Main = the full extraction. Calibration papers are re-extracted "
+                     "in Main, so pick the correct phase for THIS entry.")
 
         st.markdown("---")
         st.subheader("General Study Characteristics")
@@ -632,7 +679,9 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
 
     if submitted:
         missing_text = []
-        if not reviewer.strip(): missing_text.append("Reviewer Name (Tab 1)")
+        if not (reviewer and str(reviewer).strip()): missing_text.append("Reviewer (Tab 1)")
+        if study_id is None: missing_text.append("Study ID (Covidence) (Tab 1)")
+        if phase is None: missing_text.append("Phase (Tab 1)")
         if not author.strip(): missing_text.append("Lead Author (Tab 1)")
         if year is None: missing_text.append("Publication Year (Tab 1)")
 
@@ -712,6 +761,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
         else:
             row_data = [
                 datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %Z"), reviewer,
+                ("" if study_id is None else str(int(study_id))), phase,
                 author, _s(year), study_type, country, setting, scenario,
                 sim_fidelity, scen_complexity,
                 _s(total_n), _s(arm_n), unit_random, team_compo,
