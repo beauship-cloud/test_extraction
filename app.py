@@ -1,11 +1,50 @@
 """
-Cognitive Aids NMA — Data Extraction Tool (v5.2)
+Cognitive Aids NMA — Data Extraction Tool (v5.3)
 Streamlit app matching extraction form.
 Deploy: GitHub → Streamlit Community Cloud.
 
 Requires:
   - st.secrets["gcp_service_account"] : service-account JSON
   - Google Sheet with header row matching SHEET_HEADERS below
+
+v5.3 changes (from v5.2) — protocol↔form reconciliation before extraction start:
+  - SIMULATED PATIENT OUTCOME (new Outcome 5). The protocol lists simulated
+    patient-related outcomes as a secondary outcome, "descriptive only, not pooled".
+    v5.2 had NO field for it, so such outcomes would have been silently dropped and
+    the affected papers re-opened later. Added:
+      * "Sim patient outcome reported?" — gate (GATE_OPTS), REQUIRED every arm,
+        same true-absence-vs-blank logic as the other four gates.
+      * "Sim patient outcome description" — free-text narrative, REQUIRED when the
+        gate == "Reported". Deliberately NO numeric mean/SD/N block — the protocol
+        says this outcome is described, never pooled, so a numeric block would invite
+        accidental meta-analysis. SHEET_HEADERS +2.
+  - ADHERENCE (PRIMARY) instrument + tier + scale-max. The protocol's primary is a
+    hierarchy — steps proportion → checklist total → validated performance score,
+    one measure per study — but v5.2 recorded none of WHICH measure/instrument was
+    taken. A secondary outcome (NTS) had an instrument field while the primary did
+    not. Added, immediately after the Adherence gate:
+      * "Adherence measure tier" — which hierarchy level this value is (tier 1/2/3
+        / other). REQUIRED when Adherence gate == "Reported". Gives the one-measure-
+        per-study audit trail.
+      * "Adherence instrument" — free text (e.g., study checklist, OSCAR, TAPAS).
+        REQUIRED only for tier 3 (validated scores are named); optional otherwise.
+      * "Adherence scale max" — denominator/max of the scale. REQUIRED for tier 2 &
+        tier 3 (needed to interpret a raw score across instruments); optional for a
+        proportion (implicit 0–100). SHEET_HEADERS +3.
+  - UNIT split. The protocol extracts "unit of ANALYSIS"; v5.2's single field was
+    labelled "Unit of randomisation" (and the sheet header "Unit (individual/team)").
+    For cluster/team designs these differ, and mislabelling them risks a unit-of-
+    analysis error in the NMA. Split into TWO required fields:
+      * "Unit of randomisation"  (replaces the old ambiguous "Unit (individual/team)")
+      * "Unit of analysis"       (new)
+    SHEET_HEADERS +1.
+  - FIDELITY scale: NO code change. The form keeps its 3-tier (Low/Mid/High/Unclear)
+    scale on purpose — it is collapsible to the protocol's 2-tier later without
+    re-extraction, whereas 2-tier → 3-tier would force re-reading. Action is on the
+    PROTOCOL text (amend its 2-tier wording to 3-tier); do NOT "fix" this form back
+    to 2 tiers.
+  - Net column count: 81 -> 87. Update the Google Sheet header row BEFORE extraction
+    (see the ⚠️ block below for exact insert positions).
 
 v5.2 changes (from v5.1):
   - MERGE KEYS for 4-reviewer dual independent extraction:
@@ -71,7 +110,7 @@ TZ = ZoneInfo("America/Toronto")
 # stdlib replacement for scipy.stats.norm.ppf
 _norm_ppf = NormalDist().inv_cdf
 
-st.set_page_config(page_title="Cognitive Aids NMA Extraction v5.2", layout="wide")
+st.set_page_config(page_title="Cognitive Aids NMA Extraction v5.3", layout="wide")
 
 # =============================================================================
 # Google Sheets connection
@@ -108,6 +147,15 @@ worksheet = client.open_by_url(SHEET_URL).sheet1
 #      "Study ID (Covidence)"   (col C)
 #      "Phase"                  (col D)
 #    Do this BEFORE any extraction starts. Total columns: 79 -> 81.
+# ⚠️ v5.3: insert SIX new header columns, BEFORE any extraction starts:
+#      1. RENAME "Unit (individual/team)"  ->  "Unit of randomisation"
+#      2. INSERT "Unit of analysis"        immediately AFTER "Unit of randomisation"
+#      3. INSERT "Adherence measure tier"  immediately AFTER "Adherence reported?"
+#      4. INSERT "Adherence instrument"    immediately AFTER "Adherence measure tier"
+#      5. INSERT "Adherence scale max"     immediately AFTER "Adherence instrument"
+#      6. INSERT "Sim patient outcome reported?"     immediately AFTER "NTS comments"
+#      7. INSERT "Sim patient outcome description"   immediately AFTER that gate
+#    (rename = 0 net; five inserts + one Unit insert = +6). Total columns: 81 -> 87.
 # =============================================================================
 SHEET_HEADERS = [
     "Timestamp", "Reviewer",
@@ -117,7 +165,8 @@ SHEET_HEADERS = [
     "Lead Author", "Year", "Study Type", "Country", "Setting", "Scenario",
     "Simulation Fidelity", "Scenario Complexity",
     # Population
-    "Total N (all arms)", "N (this arm)", "Unit (individual/team)",
+    "Total N (all arms)", "N (this arm)",
+    "Unit of randomisation", "Unit of analysis",   # v5.3: split (was "Unit (individual/team)")
     "Team composition (free text)", "Team interprofessionality",
     "Provider experience",
     # Intervention / CA / Node
@@ -132,6 +181,7 @@ SHEET_HEADERS = [
     "Implementation narrative",
     # Outcome 1: Adherence (PRIMARY, continuous)
     "Adherence reported?",
+    "Adherence measure tier", "Adherence instrument", "Adherence scale max",  # v5.3
     "Adherence Mean", "Adherence SD", "Adherence N analyzed",
     "Adherence original format", "Adherence raw median stats",
     "Adherence conversion method", "Adherence Kirkpatrick level",
@@ -149,6 +199,8 @@ SHEET_HEADERS = [
     "NTS reported?",
     "NTS Mean", "NTS SD", "NTS N analyzed",
     "NTS instrument", "NTS comments",
+    # Outcome 5: Simulated patient outcome (v5.3 — DESCRIPTIVE ONLY, never pooled)
+    "Sim patient outcome reported?", "Sim patient outcome description",
     # RoB-2 (RCT only — assess once per study, normally on Arm 1)
     "RoB-2 D1 Randomization", "RoB-2 D2 Deviation",
     "RoB-2 D3 Missing data", "RoB-2 D4 Measurement",
@@ -169,12 +221,12 @@ GATE_OPTS = ["Reported", "Not measured", "Measured – not extractable", "Unclea
 # Reviewer field into a dropdown — this prevents name-spelling drift ("A"/"a"/
 # "Reviewer A") that would break the later merge. Leave empty ([]) to keep Reviewer
 # as a free-text box (unchanged from v5.1).
-REVIEWERS = ["Angélique", "Rohit", "Shayan", "Yeonjung"]  # e.g. ["Angelique", "Reviewer B", "Reviewer C", "Reviewer D"]
+REVIEWERS = []  # e.g. ["Angelique", "Reviewer B", "Reviewer C", "Reviewer D"]
 
 # =============================================================================
 # UI
 # =============================================================================
-st.title("🌐 Cognitive Aids NMA — Data Extraction (v5.2)")
+st.title("🌐 Cognitive Aids NMA — Data Extraction (v5.3)")
 st.info(
     """
 **📌 INSTRUCTIONS**
@@ -185,8 +237,11 @@ st.info(
 5. ★ = NMA-critical field (Node, N per arm, Mean/SD/N for primary outcome).
 6. For median-reported outcomes, use the **Median → Mean/SD converter** in Tab 4.
 7. **RoB-2 & MERSQI are study-level** — assess them ONCE per study (normally on Arm 1). They are optional on later arms of the same study; leave blank to avoid duplicate entry.
-8. **Outcome gates** (Tab 4): for EACH outcome pick whether it is *Reported / Not measured / Measured–not extractable / Unclear*. Sub-fields are only required when you pick **Reported**. This records a TRUE absence instead of an ambiguous blank.
+8. **Outcome gates** (Tab 4): for EACH of the **five** outcomes pick *Reported / Not measured / Measured–not extractable / Unclear*. Sub-fields are only required when you pick **Reported**. This records a TRUE absence instead of an ambiguous blank.
 9. **Fidelity rate** (Tab 3): fill *CA use fidelity rate (%)* ONLY when *CA use fidelity check* = "Yes — quantitative" (then it is required). For any other check value, leave it blank — the check field already records why there is no rate.
+10. **Unit** (Tab 1): *Unit of randomisation* = what was allocated to arms; *Unit of analysis* = what the effect size is computed on. They differ for cluster/team designs — fill both.
+11. **Adherence tier** (Tab 4): pick which hierarchy level the primary value is (steps proportion > checklist total > validated score). Instrument is required for validated (Tier 3) scores; scale-max is required for Tier 2/3.
+12. **Simulated patient outcome** (Tab 4, Outcome 5): descriptive only — narrative text, no numbers, never pooled.
 """
 )
 
@@ -330,7 +385,22 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             unit_random = st.selectbox(
                 "Unit of randomisation",
                 ["Individual (single-provider)", "Team (multi-provider)", "Cluster", "Unclear"],
+                help="What was RANDOMLY ALLOCATED to arms (the design's unit). For a "
+                     "cluster RCT this is the cluster (ward/centre/session); it can "
+                     "differ from the unit the OUTCOME is analysed at — record that "
+                     "separately in 'Unit of analysis'.",
                 key="unit_random",
+                index=None,
+                placeholder="— select —",
+            )
+            unit_analysis = st.selectbox(
+                "★ Unit of analysis",
+                ["Individual (single-provider)", "Team (multi-provider)", "Cluster", "Unclear"],
+                help="The unit the effect size / N is computed on (one data point = ?). "
+                     "Often equals the randomisation unit, but NOT always: e.g. cluster- "
+                     "randomised yet analysed per individual. Mismatch here flags a "
+                     "unit-of-analysis issue for the NMA — note it in the uncertainty log.",
+                key="unit_analysis",
                 index=None,
                 placeholder="— select —",
             )
@@ -540,6 +610,36 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
              "Lower = better (e.g., % steps missed, failure rate)",
              "N/A — outcome not extracted in this arm"],
             horizontal=True, key="adh_direction", index=None)
+
+        # v5.3 — record WHICH measure in the protocol hierarchy this value is, plus its
+        # instrument + scale, so a study contributing multiple adherence-type measures
+        # has a documented one-measure-per-study choice and cross-instrument SMD context.
+        at1, at2, at3 = st.columns(3)
+        with at1:
+            adh_tier = st.selectbox("★ Adherence measure tier",
+                ["Tier 1 — steps completed/missed (proportion)",
+                 "Tier 2 — checklist-based adherence score",
+                 "Tier 3 — validated technical performance score",
+                 "Other / composite"],
+                help="Protocol primary-outcome hierarchy (one measure per study): prefer "
+                     "Tier 1 (step proportion) > Tier 2 (checklist total) > Tier 3 "
+                     "(validated score). Record the tier of the value you extracted; if "
+                     "a study reports several, note in comments why this one was chosen.",
+                key="adh_tier", index=None, placeholder="— select —")
+        with at2:
+            adh_instrument = st.text_input("Adherence instrument",
+                help="Name of the checklist / scale (e.g., study-specific checklist, "
+                     "OSCAR, TAPAS). Required for Tier 3 (validated scores are named); "
+                     "optional for Tier 1/2.",
+                key="adh_instrument")
+        with at3:
+            adh_scalemax = st.number_input("Adherence scale max",
+                value=None, min_value=0.0, format="%.4f",
+                help="Maximum possible value of the scale (denominator). Required for "
+                     "Tier 2 & Tier 3 to interpret a raw score across instruments; leave "
+                     "blank for a proportion (implicit 0–100).",
+                key="adh_scalemax")
+
         o1c1, o1c2, o1c3 = st.columns(3)
         with o1c1: adh_mean = st.number_input("★ Mean", value=None, format="%.4f", key="adh_mean")
         with o1c2: adh_sd = st.number_input("★ SD", value=None, min_value=0.0, format="%.4f", key="adh_sd")
@@ -606,6 +706,21 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
         with nts3: nts_n = st.number_input("N analyzed", value=None, min_value=0, step=1, key="nts_n")
         nts_instrument = st.text_input("Instrument", key="nts_instrument")
         nts_comments = st.text_input("NTS comments", key="nts_comments")
+
+        st.markdown("---")
+        st.markdown("### Outcome 5 — Simulated patient outcome (SECONDARY, DESCRIPTIVE ONLY — never pooled)")
+        simpt_gate = st.selectbox("★ Simulated patient outcome reported?", GATE_OPTS,
+            help="Pick 'Reported' if the study reports a simulated-patient-level outcome "
+                 "(e.g., simulated survival / ROSC as a patient state, simulated "
+                 "complication or harm). 'Not measured' = not assessed. This gate records "
+                 "a TRUE absence instead of an ambiguous blank, like the other outcomes.",
+            key="simpt_gate", index=None, placeholder="— select —")
+        st.caption("By protocol this outcome is DESCRIPTIVE ONLY and is NOT pooled — so "
+                   "there is deliberately no mean/SD/N block. Record it narratively; it "
+                   "feeds the qualitative synthesis, not the NMA.")
+        simpt_desc = st.text_area(
+            "Simulated patient outcome description (required if 'Reported')",
+            height=80, key="simpt_desc")
 
     # -------------------------------------------------------------------------
     # TAB 5 — RoB & QUALITY  (study-level — assess once per study, normally Arm 1)
@@ -694,6 +809,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             ("Scenario complexity",        scen_complexity,    "Tab 1"),
             ("Publication type",           pub_type,           "Tab 1"),
             ("Unit of randomisation",      unit_random,        "Tab 1"),
+            ("Unit of analysis",           unit_analysis,      "Tab 1"),
             ("Provider experience level",  exp_level,          "Tab 1"),
             ("Team interprofessionality",  team_inter,         "Tab 1"),
             ("NMA Node",                   nma_node,           "Tab 2"),
@@ -713,6 +829,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             ("Time reported?",             time_gate,          "Tab 4"),
             ("Error reported?",            err_gate,           "Tab 4"),
             ("NTS reported?",              nts_gate,           "Tab 4"),
+            ("Sim patient outcome reported?", simpt_gate,      "Tab 4"),
         ]
         # NOTE: "Adherence outcome direction" is no longer always-required; it is
         # now conditional on the Adherence gate == "Reported" (see below).
@@ -723,12 +840,24 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
         # Adherence: enforce sub-fields only when the outcome is actually reported
         if adh_gate == "Reported":
             if adh_direction is None: conditional_missing.append("• **Adherence outcome direction** (Tab 4)")
+            if adh_tier is None: conditional_missing.append("• **Adherence measure tier** (Tab 4)")
             if adh_mean is None: conditional_missing.append("• **Adherence Mean** (Tab 4)")
             if adh_sd is None:   conditional_missing.append("• **Adherence SD** (Tab 4)")
             if adh_n is None:    conditional_missing.append("• **Adherence N analyzed** (Tab 4)")
             if adh_orig is None: conditional_missing.append("• **Adherence original format** (Tab 4)")
             if adh_conv is None: conditional_missing.append("• **Adherence conversion method** (Tab 4)")
             if adh_kp is None:   conditional_missing.append("• **Adherence Kirkpatrick level** (Tab 4)")
+            # Tier-conditional: validated scores are named (instrument required); scored
+            # scales (Tier 2/3) need a max to interpret; a proportion (Tier 1) does not.
+            _is_tier2 = adh_tier == "Tier 2 — checklist-based adherence score"
+            _is_tier3 = adh_tier == "Tier 3 — validated technical performance score"
+            if _is_tier3 and not adh_instrument.strip():
+                conditional_missing.append("• **Adherence instrument** — required for Tier 3 (Tab 4)")
+            if (_is_tier2 or _is_tier3) and adh_scalemax is None:
+                conditional_missing.append("• **Adherence scale max** — required for Tier 2/3 (Tab 4)")
+        # Simulated patient outcome: narrative required only when reported
+        if simpt_gate == "Reported" and not simpt_desc.strip():
+            conditional_missing.append("• **Simulated patient outcome description** (Tab 4)")
         # Time: enforce reporting format + conversion only when reported
         if time_gate == "Reported":
             if time_orig is None: conditional_missing.append("• **Time original format** (Tab 4)")
@@ -764,7 +893,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 ("" if study_id is None else str(int(study_id))), phase,
                 author, _s(year), study_type, country, setting, scenario,
                 sim_fidelity, scen_complexity,
-                _s(total_n), _s(arm_n), unit_random, team_compo,
+                _s(total_n), _s(arm_n), unit_random, unit_analysis, team_compo,
                 team_inter, exp_level,
                 nma_node, node_rationale, str(arm_no), arm_label, aid_name,
                 medium, ca_type, ca_logic,
@@ -775,6 +904,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 enforcement, fidelity_check, fidelity_rate,
                 implementation_narrative,
                 _s(adh_gate),
+                _s(adh_tier), adh_instrument, _s(adh_scalemax),
                 _s(adh_mean), _s(adh_sd), _s(adh_n),
                 _s(adh_orig), adh_raw, _s(adh_conv), _s(adh_kp), adh_comments,
                 _s(time_gate),
@@ -784,6 +914,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 _s(err_events), _s(err_n), _s(err_measure), err_orig, err_comments,
                 _s(nts_gate),
                 _s(nts_mean), _s(nts_sd), _s(nts_n), nts_instrument, nts_comments,
+                _s(simpt_gate), simpt_desc,
                 _s(d1), _s(d2), _s(d3), _s(d4), _s(d5), _s(rob_overall), rob_comments,
                 mersqi_total, mersqi_comments,
                 pub_type, _s(author_contact), _s(adh_direction),
