@@ -221,7 +221,12 @@ GATE_OPTS = ["Reported", "Not measured", "Measured – not extractable", "Unclea
 # Reviewer field into a dropdown — this prevents name-spelling drift ("A"/"a"/
 # "Reviewer A") that would break the later merge. Leave empty ([]) to keep Reviewer
 # as a free-text box (unchanged from v5.1).
-REVIEWERS = []  # e.g. ["Angelique", "Reviewer B", "Reviewer C", "Reviewer D"]
+REVIEWERS = [
+      "Angélique",
+    "Rohit Bompalli",
+    "YeonJung",
+    "Shayan",      
+]
 
 # =============================================================================
 # UI
