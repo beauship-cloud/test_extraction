@@ -215,7 +215,12 @@ SHEET_HEADERS = [
 ]
 
 # Shared option list for the four outcome gates
-GATE_OPTS = ["Reported", "Not measured", "Measured – not extractable", "Unclear"]
+GATE_OPTS = ["Reported",
+             "Partially reported",
+             "Not reported (paper silent)",
+             "Explicitly not measured",
+             "Measured – not extractable",
+             "Unclear"]
 
 # Optional fixed reviewer pick-list (v5.2). Fill in the 4 reviewer names to turn the
 # Reviewer field into a dropdown — this prevents name-spelling drift ("A"/"a"/
@@ -501,7 +506,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 key="reader_present", index=None, placeholder="— select —")
             reader_mode = st.selectbox("Reader use mode",
                 ["Mandated (required by protocol)", "Encouraged (not mandated)",
-                 "Suggested / encouraged", "Discretionary", "Not used", "Unclear"],
+                 "Discretionary", "Not used", "Unclear"],
                 key="reader_mode", index=None, placeholder="— select —")
         with r2:
             interaction = st.selectbox("Interaction style",
