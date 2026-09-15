@@ -465,10 +465,10 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                 key="ca_type", index=None, placeholder="— select —")
 
         ca_logic = st.selectbox("CA logic structure",
-            ["Linear (sequential, no branching)", "Stepwise (sequential, one path)",
-             "Branching (decision-tree, adapts to user input)", "Mixed",
-             "Unclear from main text", "N/A (Control)"],
-            key="ca_logic", index=None, placeholder="— select —")
+                ["Linear / stepwise (sequential, no branching)",
+                 "Branching (decision-tree, adapts to user input)", "Mixed",
+                 "Unclear from main text", "N/A (Control)"],
+                key="ca_logic", index=None, placeholder="— select —")
 
     # -------------------------------------------------------------------------
     # TAB 3 — IMPLEMENTATION FACTORS
