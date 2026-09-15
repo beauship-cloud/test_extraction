@@ -848,15 +848,17 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
 
         conditional_missing = []
         # Adherence: enforce sub-fields only when the outcome is actually reported
-        if adh_gate == "Reported":
+        if adh_gate in ("Reported", "Partially reported"):
             if adh_direction is None: conditional_missing.append("• **Adherence outcome direction** (Tab 4)")
             if adh_tier is None: conditional_missing.append("• **Adherence measure tier** (Tab 4)")
             if adh_mean is None: conditional_missing.append("• **Adherence Mean** (Tab 4)")
-            if adh_sd is None:   conditional_missing.append("• **Adherence SD** (Tab 4)")
             if adh_n is None:    conditional_missing.append("• **Adherence N analyzed** (Tab 4)")
+            if adh_sd is None and not adh_comments.strip():
+                conditional_missing.append(
+                    "• **Adherence SD** is blank — enter it, or explain in "
+                    "**Adherence comments** why the paper does not report it (Tab 4)")
             if adh_orig is None: conditional_missing.append("• **Adherence original format** (Tab 4)")
-            if adh_conv is None: conditional_missing.append("• **Adherence conversion method** (Tab 4)")
-            if adh_kp is None:   conditional_missing.append("• **Adherence Kirkpatrick level** (Tab 4)")
+            st.caption("SD not reported? Leave blank and say so in Adherence comments. **Never enter 0.**")
             # Tier-conditional: validated scores are named (instrument required); scored
             # scales (Tier 2/3) need a max to interpret; a proportion (Tier 1) does not.
             _is_tier2 = adh_tier == "Tier 2 — checklist-based adherence score"
