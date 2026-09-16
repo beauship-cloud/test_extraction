@@ -1,280 +1,471 @@
+"""Cognitive Aids NMA extraction v6.0.
+Built from the user's v5.4. Existing 87 headers are unchanged.
+Run: streamlit run app.py. No Google write occurs until a setup/save button is clicked.
 """
-Cognitive Aids NMA — Data Extraction Tool (v5.4)
-Streamlit app matching extraction form.
-Deploy: GitHub → Streamlit Community Cloud.
-
-Requires:
-  - st.secrets["gcp_service_account"] : service-account JSON
-  - Google Sheet with header row matching SHEET_HEADERS below
-
-v5.4 changes (from v5.3) — post-calibration fixes. NO new sheet columns; the
-Google Sheet header row does NOT need to change (still 87 columns).
-
-  A. GATE_OPTS expanded from 4 to 6 options. The old set could not record a paper
-     that is simply SILENT about an outcome: "Not measured" is a claim that the
-     study did not assess it, which silence does not support. Added:
-       * "Partially reported"        — some statistics present, others absent
-       * "Not reported (paper silent)" — DEFAULT for silence
-       * "Explicitly not measured"   — replaces the old bare "Not measured";
-                                       use ONLY when the paper states it
-     Stored as a string in the existing gate columns → column count unchanged.
-
-  B. ADHERENCE SD no longer blocks submission when the paper does not report it.
-     v5.3 required Mean + SD + N whenever the gate == "Reported". A paper with a
-     mean and no SD (e.g. McEvoy) therefore could not be submitted honestly, and
-     the only way past validation was to type SD = 0 — which is what happened in
-     the calibration data. Now: a blank SD is allowed IF "Adherence comments"
-     explains it. An unexplained blank still blocks.
-     Adherence sub-field validation now fires on "Partially reported" as well.
-
-  C. Misplaced st.caption fixed. The "never enter 0" caption was inside the
-     `if submitted:` validation block, so it rendered below the Submit button
-     AFTER submission instead of beside the SD input. Moved to Tab 4.
-
-  D. Restored validation for "Adherence conversion method" and "Adherence
-     Kirkpatrick level", which were dropped when C was introduced.
-
-  E. Arm Label and Node rationale are now enforced. Both are marked ★ but were
-     never checked: CRITICAL_FIELDS tests `val is None`, and an empty text_input
-     returns "" rather than None, so both could be submitted blank.
-
-  F. Duplicate dropdown options removed (reviewers were splitting arbitrarily
-     between synonyms, which looks like disagreement at merge time):
-       * "CA logic structure": "Linear (sequential, no branching)" and
-         "Stepwise (sequential, one path)" merged into one option.
-       * "Reader use mode": "Suggested / encouraged" removed (duplicate of
-         "Encouraged (not mandated)").
-     NOTE: rows already stored under the removed strings keep them; harmonise at
-     the reconciliation stage.
-
-  G. Time / Error / Sim-patient gated validation now fires on "Partially
-     reported" as well as "Reported", for consistency with the adherence block.
-
-  H. Median→Mean/SD converter, Hozo n<=15 branch: the original Hozo (2005)
-     small-sample SD estimator includes a median-position term,
-         SD ≈ sqrt( ( (a - 2m + b)^2 / 4 + (b - a)^2 ) / 12 )
-     which reduces to range/(2*sqrt(3)) ONLY when the median sits exactly at the
-     centre of the range. v5.3 applied the reduced form to every small sample.
-     Fixed to the full expression. The 15<n<=70 and n>70 branches are unchanged.
-     The converter remains a convenience display only — it writes nothing to the
-     sheet, and project policy is that conversions are done centrally, once, on
-     the consensus data.
-
-v5.3 changes (from v5.2) — protocol↔form reconciliation before extraction start:
-  - SIMULATED PATIENT OUTCOME (new Outcome 5). The protocol lists simulated
-    patient-related outcomes as a secondary outcome, "descriptive only, not pooled".
-    v5.2 had NO field for it, so such outcomes would have been silently dropped and
-    the affected papers re-opened later. Added:
-      * "Sim patient outcome reported?" — gate (GATE_OPTS), REQUIRED every arm,
-        same true-absence-vs-blank logic as the other four gates.
-      * "Sim patient outcome description" — free-text narrative, REQUIRED when the
-        gate == "Reported". Deliberately NO numeric mean/SD/N block — the protocol
-        says this outcome is described, never pooled, so a numeric block would invite
-        accidental meta-analysis. SHEET_HEADERS +2.
-  - ADHERENCE (PRIMARY) instrument + tier + scale-max. The protocol's primary is a
-    hierarchy — steps proportion → checklist total → validated performance score,
-    one measure per study — but v5.2 recorded none of WHICH measure/instrument was
-    taken. A secondary outcome (NTS) had an instrument field while the primary did
-    not. Added, immediately after the Adherence gate:
-      * "Adherence measure tier" — which hierarchy level this value is (tier 1/2/3
-        / other). REQUIRED when Adherence gate == "Reported". Gives the one-measure-
-        per-study audit trail.
-      * "Adherence instrument" — free text (e.g., study checklist, OSCAR, TAPAS).
-        REQUIRED only for tier 3 (validated scores are named); optional otherwise.
-      * "Adherence scale max" — denominator/max of the scale. REQUIRED for tier 2 &
-        tier 3 (needed to interpret a raw score across instruments); optional for a
-        proportion (implicit 0–100). SHEET_HEADERS +3.
-  - UNIT split. The protocol extracts "unit of ANALYSIS"; v5.2's single field was
-    labelled "Unit of randomisation" (and the sheet header "Unit (individual/team)").
-    For cluster/team designs these differ, and mislabelling them risks a unit-of-
-    analysis error in the NMA. Split into TWO required fields:
-      * "Unit of randomisation"  (replaces the old ambiguous "Unit (individual/team)")
-      * "Unit of analysis"       (new)
-    SHEET_HEADERS +1.
-  - FIDELITY scale: NO code change. The form keeps its 3-tier (Low/Mid/High/Unclear)
-    scale on purpose — it is collapsible to the protocol's 2-tier later without
-    re-extraction, whereas 2-tier → 3-tier would force re-reading. Action is on the
-    PROTOCOL text (amend its 2-tier wording to 3-tier); do NOT "fix" this form back
-    to 2 tiers.
-  - Net column count: 81 -> 87. Update the Google Sheet header row BEFORE extraction
-    (see the ⚠️ block below for exact insert positions).
-
-v5.2 changes (from v5.1):
-  - MERGE KEYS for 4-reviewer dual independent extraction:
-      * "Study ID (Covidence)" — the Covidence record number (e.g. 9405), REQUIRED.
-      * "Phase" — Calibration / Main, REQUIRED.
-    Both inserted right after "Reviewer" (sheet columns 3 and 4). SHEET_HEADERS 79 -> 81.
-    Reconciliation / IRR merge key = Study ID + Phase + Reviewer + Arm No.
-  - Reviewer field can be locked to a fixed pick-list via REVIEWERS.
-
-v5.1 changes (from v5.0):
-  - FIDELITY-RATE GATE: "CA use fidelity rate (%)" is gated by the existing
-    "CA use fidelity check" field, NOT by a new gate column. Validation-time only.
-  - Robustness: "Adherence outcome direction" written via _s().
-
-v5.0 changes (from prior build):
-  - RoB-2 and MERSQI optional (study-level, normally assessed on Arm 1).
-  - Error effect-measure field records HOW THE PAPER reported it.
-  - Median-converter input labels clarified per method (IQR vs range).
-  - Total N / Arm N default to blank (None) instead of 0.
-  - OUTCOME GATES introduced for the 4 outcomes.
-"""
-
-import streamlit as st
-import pandas as pd
-import gspread
-from google.oauth2.service_account import Credentials
+import hashlib
+import json
+import math
+import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
-import math
-from statistics import NormalDist
+import gspread
+import streamlit as st
+from google.oauth2.service_account import Credentials
 
-# Project timezone — all submissions stamped in Montréal time (EDT/EST)
+VERSION = "6.0"
 TZ = ZoneInfo("America/Toronto")
-
-# stdlib replacement for scipy.stats.norm.ppf
-_norm_ppf = NormalDist().inv_cdf
-
-st.set_page_config(page_title="Cognitive Aids NMA Extraction v5.4", layout="wide")
-
-# =============================================================================
-# Google Sheets connection
-# =============================================================================
-@st.cache_resource
-def init_connection():
-    creds = Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"],
-        scopes=[
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-        ],
-    )
-    return gspread.authorize(creds)
-
-client = init_connection()
 SHEET_URL = "https://docs.google.com/spreadsheets/d/12HHfPH04LEsg9UTuMlm-w20X6UniAQDEFA2C2WmrKEA/edit"
-worksheet = client.open_by_url(SHEET_URL).sheet1
-
-# =============================================================================
-# Sheet column order — MUST match the header row of your Google Sheet
-# ⚠️ WARNING: Ensure ROBINS-I columns are deleted from the Google Sheet!
-# ⚠️ v5.0: FOUR gate columns inserted.       Total columns: 75 -> 79.
-# ⚠️ v5.1: NO new columns.                   Total columns: 79.
-# ⚠️ v5.2: TWO merge-key columns after "Reviewer".  Total: 79 -> 81.
-# ⚠️ v5.3: SIX new columns.                  Total: 81 -> 87.
-# ⚠️ v5.4: NO new columns — validation, option lists and captions only.
-#          The Google Sheet header row is UNCHANGED at 87 columns.
-# =============================================================================
-SHEET_HEADERS = [
-    "Timestamp", "Reviewer",
-    # Merge keys (v5.2) — Covidence record # + extraction phase
-    "Study ID (Covidence)", "Phase",
-    # Study info
-    "Lead Author", "Year", "Study Type", "Country", "Setting", "Scenario",
-    "Simulation Fidelity", "Scenario Complexity",
-    # Population
-    "Total N (all arms)", "N (this arm)",
-    "Unit of randomisation", "Unit of analysis",   # v5.3: split (was "Unit (individual/team)")
-    "Team composition (free text)", "Team interprofessionality",
-    "Provider experience",
-    # Intervention / CA / Node
-    "NMA Node", "Node rationale", "Arm No.", "Arm Label", "CA Name",
-    "Format - medium", "Format - type", "CA logic structure",
-    # Implementation
-    "Pre-training intensity", "Pre-training description",
-    "Training duration", "Training method", "Training timing",
-    "Designated Reader present", "Reader use mode",
-    "Interaction style", "Strictness of workflow",
-    "CA use enforcement", "CA use fidelity check", "CA use fidelity rate (%)",
-    "Implementation narrative",
-    # Outcome 1: Adherence (PRIMARY, continuous)
-    "Adherence reported?",
-    "Adherence measure tier", "Adherence instrument", "Adherence scale max",  # v5.3
-    "Adherence Mean", "Adherence SD", "Adherence N analyzed",
-    "Adherence original format", "Adherence raw median stats",
-    "Adherence conversion method", "Adherence Kirkpatrick level",
-    "Adherence comments",
-    # Outcome 2: Time to critical action (SECONDARY, continuous)
-    "Time reported?",
-    "Time Mean", "Time SD", "Time N analyzed",
-    "Time original format", "Time raw median stats",
-    "Time conversion method", "Time comments",
-    # Outcome 3: Error rate (SECONDARY, dichotomous)
-    "Error reported?",
-    "Error events", "Error N analyzed", "Error measure as reported",
-    "Error original reporting", "Error comments",
-    # Outcome 4: Teamwork / NTS (separate analysis)
-    "NTS reported?",
-    "NTS Mean", "NTS SD", "NTS N analyzed",
-    "NTS instrument", "NTS comments",
-    # Outcome 5: Simulated patient outcome (v5.3 — DESCRIPTIVE ONLY, never pooled)
-    "Sim patient outcome reported?", "Sim patient outcome description",
-    # RoB-2 (RCT only — assess once per study, normally on Arm 1)
-    "RoB-2 D1 Randomization", "RoB-2 D2 Deviation",
-    "RoB-2 D3 Missing data", "RoB-2 D4 Measurement",
-    "RoB-2 D5 Selective reporting", "RoB-2 Overall", "RoB-2 Comments",
-    # MERSQI (assess once per study, normally on Arm 1)
-    "MERSQI total (max 18)", "MERSQI Comments",
-    # Metadata
-    "Publication type",
-    "Author contact status",
-    "Adherence outcome direction",
-    "Coding uncertainty log",
-]
-
-# Shared option list for the five outcome gates (v5.4: 4 -> 6 options)
-GATE_OPTS = ["Reported",
-             "Partially reported",
-             "Not reported (paper silent)",
-             "Explicitly not measured",
-             "Measured – not extractable",
-             "Unclear"]
-
-# Gate values that trigger the numeric sub-field checks
+OUTCOMES_TAB = "Outcomes"
+GATE_OPTS = ["Reported", "Partially reported", "Not reported (paper silent)",
+             "Explicitly not measured", "Measured – not extractable", "Unclear"]
 GATE_ACTIVE = ("Reported", "Partially reported")
+REVIEWERS = ["Angélique", "Rohit Bompalli", "YeonJung", "Shayan"]
+DOMAINS = {"Adherence": "adh_gate", "Time": "time_gate", "Error": "err_gate", "NTS": "nts_gate"}
+FORMATS = {
+    "mean ± SD": ["Mean", "SD"],
+    "mean (SE)": ["Mean", "SE"],
+    "mean (CI)": ["Mean", "CI lower", "CI upper"],
+    "mean + range": ["Mean", "Min", "Max"],
+    "mean only": ["Mean"],
+    "median + IQR (Q1, Q3)": ["Median", "Q1", "Q3"],
+    "median + IQR width": ["Median", "IQR width"],
+    "median + range": ["Median", "Min", "Max"],
+    "median only": ["Median"],
+    "events / N": ["Events", "N analyzed"],
+    "percentage / proportion": ["Estimate"],
+    "effect estimate (CI)": ["Estimate", "CI lower", "CI upper"],
+    "Other / figure / narrative": [],
+}
+NUMERIC_FIELDS = ["Mean", "SD", "SE", "Median", "Q1", "Q3", "IQR width", "Min", "Max",
+                  "Events", "Estimate", "CI lower", "CI upper", "CI level (%)"]
+OUTCOME_FIELDS = ["Domain", "Outcome name", "Scenario", "Scenario scope", "Event / phase",
+    "Result status", "Analysis population", "Estimate basis", "Instrument", "Adherence measure tier",
+    "Scale max", "Outcome direction", "Kirkpatrick level", "Original reporting format",
+    *NUMERIC_FIELDS, "Estimate type / comparison", "N analyzed", "N unit", "Measurement unit",
+    "Time type", "Time origin", "Time endpoint", "Raw reported statistics", "Source", "Comments"]
+OUTCOME_HEADERS = ["Timestamp", "Reviewer", "Study ID (Covidence)", "Phase", "Arm No.",
+                   "Submission ID", "Outcome ID", "Form version", *OUTCOME_FIELDS]
 
-# Fixed reviewer pick-list — prevents name-spelling drift that would break the merge.
-REVIEWERS = [
-    "Angélique",
-    "Rohit Bompalli",
-    "YeonJung",
-    "Shayan",
+SHEET_HEADERS = [
+    'Timestamp',
+    'Reviewer',
+    'Study ID (Covidence)',
+    'Phase',
+    'Lead Author',
+    'Year',
+    'Study Type',
+    'Country',
+    'Setting',
+    'Scenario',
+    'Simulation Fidelity',
+    'Scenario Complexity',
+    'Total N (all arms)',
+    'N (this arm)',
+    'Unit of randomisation',
+    'Unit of analysis',
+    'Team composition (free text)',
+    'Team interprofessionality',
+    'Provider experience',
+    'NMA Node',
+    'Node rationale',
+    'Arm No.',
+    'Arm Label',
+    'CA Name',
+    'Format - medium',
+    'Format - type',
+    'CA logic structure',
+    'Pre-training intensity',
+    'Pre-training description',
+    'Training duration',
+    'Training method',
+    'Training timing',
+    'Designated Reader present',
+    'Reader use mode',
+    'Interaction style',
+    'Strictness of workflow',
+    'CA use enforcement',
+    'CA use fidelity check',
+    'CA use fidelity rate (%)',
+    'Implementation narrative',
+    'Adherence reported?',
+    'Adherence measure tier',
+    'Adherence instrument',
+    'Adherence scale max',
+    'Adherence Mean',
+    'Adherence SD',
+    'Adherence N analyzed',
+    'Adherence original format',
+    'Adherence raw median stats',
+    'Adherence conversion method',
+    'Adherence Kirkpatrick level',
+    'Adherence comments',
+    'Time reported?',
+    'Time Mean',
+    'Time SD',
+    'Time N analyzed',
+    'Time original format',
+    'Time raw median stats',
+    'Time conversion method',
+    'Time comments',
+    'Error reported?',
+    'Error events',
+    'Error N analyzed',
+    'Error measure as reported',
+    'Error original reporting',
+    'Error comments',
+    'NTS reported?',
+    'NTS Mean',
+    'NTS SD',
+    'NTS N analyzed',
+    'NTS instrument',
+    'NTS comments',
+    'Sim patient outcome reported?',
+    'Sim patient outcome description',
+    'RoB-2 D1 Randomization',
+    'RoB-2 D2 Deviation',
+    'RoB-2 D3 Missing data',
+    'RoB-2 D4 Measurement',
+    'RoB-2 D5 Selective reporting',
+    'RoB-2 Overall',
+    'RoB-2 Comments',
+    'MERSQI total (max 18)',
+    'MERSQI Comments',
+    'Publication type',
+    'Author contact status',
+    'Adherence outcome direction',
+    'Coding uncertainty log',
 ]
 
-# =============================================================================
-# UI
-# =============================================================================
-st.title("🌐 Cognitive Aids NMA — Data Extraction (v5.4)")
-st.info(
-    """
-**📌 INSTRUCTIONS**
-1. **Reviewer / Study ID / Phase** (Tab 1) — all required. **Study ID = the Covidence record number** for this paper (e.g. 9405); type it exactly as Covidence shows it. **Phase** = *Calibration* (the shared alignment papers) or *Main* (the full extraction).
-2. Extract data for **ONE arm per submission**.
-3. **Multi-arm study**: after submitting arm 1, update Arm No., Arm Label, NMA Node, Node rationale, **N (this arm)** and all Outcomes → Submit again. Everything else stays on screen — **re-check the arm-specific implementation fields (reader, training, enforcement) rather than assuming they carry over.**
-4. **New study**: refresh browser (F5 / Cmd+R) to clear all fields.
-5. ★ = NMA-critical field. As of v5.4 every ★ field is enforced at submission, including **Arm Label** and **Node rationale**.
-6. **Do not use the Median → Mean/SD converter to fill the sheet.** Enter the raw statistics (median; Q1–Q3 or min–max; n) in the *Raw median stats* box. Conversions are done once, centrally, on the consensus data. The converter in Tab 4 is a sanity-check display only.
-7. **RoB-2 & MERSQI are study-level** in this form — assess once per study (normally on Arm 1) and leave blank on later arms. **Record which outcome and analysis you assessed RoB-2 against on the first line of RoB-2 comments**, and give a rationale for every domain *including the ones you rate Low*.
-8. **Outcome gates** (Tab 4) — for EACH of the **five** outcomes pick one of six:
-   * **Reported** — usable numbers present
-   * **Partially reported** — some statistics present, others absent (e.g. mean but no SD)
-   * **Not reported (paper silent)** — the paper says nothing. **This is the default for silence**
-   * **Explicitly not measured** — the paper states it did not measure this. Paste the sentence in the uncertainty log
-   * **Measured – not extractable** — assessed, but no usable numbers (→ author-contact candidate)
-   * **Unclear** — cannot tell. Give the reason in the log
-9. **Never type 0 for an SD the paper does not report.** Leave SD blank and say so in *Adherence comments*; the form will accept it.
-10. **Fidelity rate** (Tab 3): fill *CA use fidelity rate (%)* ONLY when *CA use fidelity check* = "Yes — quantitative" (then it is required). A quantitative check is not always a percentage — if it is a count or a duration, type the number with its unit and explain in the implementation narrative.
-11. **Unit** (Tab 1): *Unit of randomisation* = what was allocated to arms; *Unit of analysis* = what the effect size is computed on. Fill both. **Team allocation alone does not make a study a cluster RCT** — that matters only when the outcome is analysed at a level below the allocated unit.
-12. **Adherence tier** (Tab 4): pick which hierarchy level the primary value is. Instrument is required for validated (Tier 3) scores; scale-max is required for Tier 2/3. *Note: the Tier 1 > 2 > 3 preference is not stated in the current protocol — record in comments why you chose this measure.*
-13. **Simulated patient outcome** (Tab 4, Outcome 5): narrative only, never pooled — but still record the reported numbers and their denominator in the description so they are not lost.
-"""
-)
 
 def _s(x):
-    """Stringify safely for gspread: None → empty string, else str(x)."""
-    return "" if x is None else str(x)
+    # Preserve real numeric cells, including MERSQI. Never convert missing values to zero.
+    return "" if x is None else x
 
-with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
+
+def has_value(x):
+    return x is not None and str(x).strip() != ""
+
+
+def canonical_key(record):
+    def integerish(value):
+        try:
+            v = float(value)
+            return str(int(v)) if v.is_integer() else str(value).strip()
+        except (ValueError, TypeError):
+            return str(value).strip()
+    return (integerish(record.get("Study ID (Covidence)", "")),
+            str(record.get("Phase", "")).strip(), str(record.get("Reviewer", "")).strip(),
+            integerish(record.get("Arm No.", "")))
+
+
+def validate_result(r):
+    errors = []
+    for f in ["Outcome name", "Scenario", "Scenario scope", "Analysis population",
+              "Estimate basis", "Original reporting format", "Result status", "Source"]:
+        if not has_value(r.get(f)):
+            errors.append(f"{f} is required (use 'not reported' where appropriate).")
+    fmt = r.get("Original reporting format")
+    status = r.get("Result status")
+    note = str(r.get("Comments") or "").strip()
+    raw = str(r.get("Raw reported statistics") or "").strip()
+    if fmt not in FORMATS:
+        errors.append("Choose a supported reporting format.")
+    if status not in ("Reported", "Partially reported", "Source pending / unclear"):
+        errors.append("Select Result status.")
+    if any("unclear" in str(r.get(f) or "").lower() for f in ["Analysis population", "Estimate basis", "Outcome direction", "N unit"]) and not note:
+        errors.append("Explain unclear analysis, direction, or denominator choices in Comments.")
+    expected = FORMATS.get(fmt, [])
+    missing = [f for f in expected if not has_value(r.get(f))]
+    if missing and not (status in ("Partially reported", "Source pending / unclear") and note):
+        errors.append("Enter " + ", ".join(missing) + "; if absent, select Partially reported and explain.")
+    if status in ("Partially reported", "Source pending / unclear") and not note:
+        errors.append("Explain missing statistics or the unresolved source in Comments.")
+    numeric_present = any(has_value(r.get(f)) for f in NUMERIC_FIELDS if f != "CI level (%)")
+    # N or a scale maximum alone is not a result.
+    if not numeric_present and not raw:
+        errors.append("Enter a reported result or preserve the source statement/figure reference in Raw reported statistics.")
+    unit_text = str(r.get("Measurement unit") or "").lower().replace(" ", "")
+    if any(token in unit_text for token in ("min.seconds", "minutes.seconds", "mm:ss", "min:sec")) and not raw:
+        errors.append("Preserve the exact printed time notation in Raw reported statistics (e.g. 5.40 = 5 min 40 s).")
+    if fmt == "Other / figure / narrative" and not raw:
+        errors.append("This format requires Raw reported statistics.")
+    if not has_value(r.get("N analyzed")) and not note:
+        errors.append("N analyzed is blank: explain in Comments; do not copy the arm N by default.")
+    if has_value(r.get("N analyzed")) and not has_value(r.get("N unit")):
+        errors.append("State the N unit (people, teams, simulations, etc.).")
+    if numeric_present and not has_value(r.get("Measurement unit")):
+        errors.append("State the measurement unit (%, proportion 0–1, points, seconds, etc.).")
+    for f in NUMERIC_FIELDS + ["N analyzed", "Scale max"]:
+        v = r.get(f)
+        if has_value(v) and (not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v)):
+            errors.append(f"{f} must be a finite number.")
+    for f in ["SD", "SE", "IQR width", "Events", "Scale max"]:
+        if isinstance(r.get(f), (int, float)) and r[f] < 0:
+            errors.append(f"{f} cannot be negative.")
+    n = r.get("N analyzed")
+    if isinstance(n, (int, float)) and n <= 0:
+        errors.append("N analyzed must be positive; preserve a printed 0/0 in Raw statistics and explain instead.")
+    if fmt == "events / N" and isinstance(n, (int, float)) and isinstance(r.get("Events"), (int, float)):
+        if r["Events"] > n:
+            errors.append("Events exceed N: this block represents a dichotomous count. Preserve repeated-event counts as Other with their exposure denominator.")
+    checks = [("Q1", "Median", "Q3"), ("Min", "Median", "Max")]
+    conflict = False
+    for a,b,c in checks:
+        if all(isinstance(r.get(f), (int,float)) for f in (a,b,c)) and not r[a] <= r[b] <= r[c]:
+            conflict = True
+    for a,b in [("Min","Max"),("Q1","Q3"),("CI lower","CI upper")]:
+        if all(isinstance(r.get(f),(int,float)) for f in (a,b)) and r[a] > r[b]:
+            conflict = True
+    if conflict and not (r.get("Source conflict confirmed") and note):
+        errors.append("Statistics are out of order. Correct the entry, or confirm that the source prints it this way and explain.")
+    if fmt == "effect estimate (CI)" and not has_value(r.get("Estimate type / comparison")):
+        errors.append("Identify the effect measure, comparison/reference and scale (e.g. adjusted OR; log-time ratio).")
+    if fmt in ("mean (CI)", "effect estimate (CI)") and not has_value(r.get("CI level (%)")) and not note:
+        errors.append("Record the CI level or explain that it is not stated.")
+    if r.get("Domain") == "Time":
+        for f in ("Time type", "Time origin", "Time endpoint"):
+            if not has_value(r.get(f)):
+                errors.append(f"{f} is required; 'not reported' is acceptable when explained.")
+    if r.get("Domain") in ("Adherence", "NTS"):
+        if not has_value(r.get("Outcome direction")):
+            errors.append("Select the outcome direction, including Unclear if necessary.")
+        if not has_value(r.get("Instrument")) and not note:
+            errors.append("Name the checklist/instrument or explain that it is not reported.")
+    return errors
+
+
+def validate_domains(gates, records):
+    errors = []
+    for domain, gate in gates.items():
+        selected = [r for r in records if r["Domain"] == domain]
+        if gate is None:
+            errors.append(f"{domain}: choose the reporting status.")
+        if gate in GATE_ACTIVE and not selected:
+            errors.append(f"{domain}: add at least one result, or correct the reporting status.")
+        if gate not in GATE_ACTIVE and selected:
+            errors.append(f"{domain}: result cards remain under '{gate}'. Remove them explicitly or restore Reported/Partially reported.")
+        if gate in GATE_ACTIVE:
+            for i, r in enumerate(selected,1):
+                errors += [f"{domain} result {i}: {e}" for e in validate_result(r)]
+    signatures = set()
+    for r in records:
+        signature = tuple(str(r.get(k) or '').strip().casefold() for k in
+                          ['Domain','Outcome name','Scenario','Scenario scope','Event / phase','Analysis population','Estimate basis','Instrument'])
+        if signature in signatures:
+            errors.append("Two result cards have identical labels. Remove the duplicate or distinguish their analysis/instrument/event.")
+        signatures.add(signature)
+    return errors
+
+
+def row_cells(values):
+    result = []
+    for v in values:
+        if v is None or v == "":
+            result.append({})
+        elif isinstance(v, (int,float)) and not isinstance(v,bool):
+            if not math.isfinite(v):
+                raise ValueError("Cannot save a non-finite number.")
+            result.append({"userEnteredValue": {"numberValue": v}})
+        else:
+            # Explicit stringValue also prevents spreadsheet formula injection.
+            result.append({"userEnteredValue": {"stringValue": str(v)}})
+    return {"values": result}
+
+
+def check_headers(ws, expected):
+    actual = ws.row_values(1)
+    while actual and actual[-1] == "":
+        actual.pop()
+    if actual != expected:
+        raise ValueError(f"'{ws.title}' headers do not match this version. Existing columns were not changed; check the header template.")
+
+
+def ensure_outcomes(book, arms):
+    check_headers(arms, SHEET_HEADERS)
+    try:
+        ws = book.worksheet(OUTCOMES_TAB)
+        check_headers(ws, OUTCOME_HEADERS)
+        return ws
+    except gspread.WorksheetNotFound:
+        sheet_id = uuid.uuid4().int % 2_000_000_000
+        book.batch_update({"requests": [
+            {"addSheet": {"properties": {"sheetId": sheet_id, "title": OUTCOMES_TAB,
+                "gridProperties": {"rowCount": 1000, "columnCount": len(OUTCOME_HEADERS), "frozenRowCount": 1}}}},
+            {"updateCells": {"start": {"sheetId": sheet_id, "rowIndex":0, "columnIndex":0},
+                 "rows": [row_cells(OUTCOME_HEADERS)], "fields": "userEnteredValue"}}
+        ]})
+        return book.worksheet(OUTCOMES_TAB)
+
+
+def existing_key_rows(ws, headers, key):
+    return [dict(zip(headers,row)) for row in ws.get_all_values()[1:]
+            if canonical_key(dict(zip(headers,row))) == key]
+
+
+def save_submission(book, arms, outcomes, arm_record, records, submission_id):
+    """Append both tabs atomically. A stable metadata ID rejects concurrent same-key submissions.
+    There are no automatic overwrites of prior calibration or main-extraction rows.
+    """
+    check_headers(arms, SHEET_HEADERS)
+    check_headers(outcomes, OUTCOME_HEADERS)
+    key = canonical_key(arm_record)
+    existing_arms = existing_key_rows(arms, SHEET_HEADERS, key)
+    existing_outcomes = existing_key_rows(outcomes, OUTCOME_HEADERS, key)
+    if existing_arms or existing_outcomes:
+        if len(existing_arms) == 1 and records and len(existing_outcomes) == len(records):
+            if all(r.get("Submission ID") == submission_id for r in existing_outcomes):
+                return "already_saved"
+        # Covers a retry of an all-gates-negative arm with no Outcomes rows.
+        if len(existing_arms) == 1 and not records and not existing_outcomes:
+            if str(existing_arms[0].get("Timestamp")) == str(arm_record["Timestamp"]):
+                return "already_saved"
+        raise ValueError("This Study ID / Phase / Reviewer / Arm No. already exists. Nothing was overwritten. Review the existing submission before correcting it.")
+    key_json = json.dumps(key, ensure_ascii=False)
+    metadata_id = int(hashlib.sha256(("nma-v6:"+key_json).encode()).hexdigest()[:8],16) % 2_000_000_000 + 1
+    requests = [{"createDeveloperMetadata": {"developerMetadata": {
+        "metadataId":metadata_id, "metadataKey":"nma_v6_arm", "metadataValue":key_json,
+        "location":{"spreadsheet":True}, "visibility":"DOCUMENT"}}},
+        {"appendCells":{"sheetId":arms.id, "rows":[row_cells([arm_record.get(h,"") for h in SHEET_HEADERS])],
+                         "fields":"userEnteredValue"}}]
+    if records:
+        rows = []
+        for record in records:
+            complete = {**record, **{k:arm_record[k] for k in ['Timestamp','Reviewer','Study ID (Covidence)','Phase','Arm No.']},
+                        "Submission ID":submission_id, "Form version":VERSION}
+            rows.append(row_cells([complete.get(h,"") for h in OUTCOME_HEADERS]))
+        requests.append({"appendCells":{"sheetId":outcomes.id, "rows":rows,"fields":"userEnteredValue"}})
+    book.batch_update({"requests":requests})
+    return "saved"
+
+
+@st.cache_resource
+def open_book():
+    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"],
+            scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+    return gspread.authorize(creds).open_by_url(st.secrets.get("spreadsheet_url", SHEET_URL))
+
+
+def add_result(domain):
+    st.session_state.setdefault('_ids_'+domain, []).append(uuid.uuid4().hex[:12])
+
+
+def delete_result(domain, rid):
+    st.session_state['_ids_'+domain].remove(rid)
+    for key in list(st.session_state):
+        if key.startswith('r_'+rid+'_'):
+            del st.session_state[key]
+
+
+def clear_draft(new_study=False):
+    keep = {'reviewer','phase'} if new_study else {
+        'reviewer','phase','study_id','author','year','study_type','country','setting','scenario',
+        'total_n','unit_random','unit_analysis','sim_fidelity','scen_complexity','pub_type',
+        'author_contact','exp_level','team_compo','team_inter'}
+    next_arm = int(st.session_state.get('arm_no',1)) + 1
+    for key in list(st.session_state):
+        if key not in keep:
+            del st.session_state[key]
+    if not new_study:
+        st.session_state['arm_no'] = next_arm
+
+
+def render_result(domain, rid, ordinal):
+    prefix = 'r_'+rid+'_'
+    r = {'Domain':domain, 'Outcome ID':rid}
+    def txt(field, label=None, help=None):
+        r[field] = st.text_input(label or field, key=prefix+field, help=help)
+        return r[field]
+    def pick(field, opts, help=None):
+        r[field] = st.selectbox(field,opts,index=None,placeholder='— select —',key=prefix+field,help=help)
+        return r[field]
+    def number(field):
+        if field == 'Events':
+            r[field] = st.number_input(field,value=None,min_value=0,step=1,key=prefix+field)
+        elif field == 'CI level (%)':
+            r[field] = st.number_input(field,value=None,min_value=0.01,max_value=100.0,key=prefix+field)
+        else:
+            r[field] = st.number_input(field,value=None,format='%.6f',key=prefix+field)
+    with st.expander(f'{domain} result {ordinal}',expanded=True):
+        st.button('Delete this result',key='del_'+rid,on_click=delete_result,args=(domain,rid))
+        c1,c2 = st.columns(2)
+        with c1:
+            txt('Outcome name',help='Name the score, action or event. Only extract outcomes selected under the review rules.')
+            pick('Scenario scope',['Single scenario','Multiple scenarios combined','Not specified'])
+            txt('Scenario',help="Use the named scenario, 'All scenarios', or 'Not reported'.")
+            txt('Event / phase',help='Optional: e.g. primary event (SVT), secondary event (VT), post-test.')
+        with c2:
+            pick('Result status',['Reported','Partially reported','Source pending / unclear'])
+            pick('Analysis population',['As randomised / ITT','Per-protocol / completers','As-treated / actual use','Other / unclear'])
+            pick('Estimate basis',['Raw descriptive statistics','Model-based / adjusted estimate','Other / unclear'])
+            if domain in ('Adherence','NTS'):
+                txt('Instrument',help='Checklist/scale name; explain in Comments if absent.')
+        if domain == 'Time':
+            c1,c2,c3 = st.columns(3)
+            with c1: pick('Time type',['Time to critical action','Total scenario / on-scene duration','Other time interval'])
+            with c2: txt('Time origin',help='What starts the clock? If not reported, say so.')
+            with c3: txt('Time endpoint',help='What stops the clock? Keep preset scenario stopping rules separate from observed results.')
+        if domain in ('Adherence','NTS'):
+            c1,c2 = st.columns(2)
+            with c1: pick('Outcome direction',['Higher = better','Lower = better','Context-dependent / unclear'])
+            with c2: number('Scale max')
+        if domain == 'Adherence':
+            c1,c2 = st.columns(2)
+            with c1: pick('Adherence measure tier',['Tier 1 — steps completed/missed (proportion)',
+                'Tier 2 — checklist-based adherence score','Tier 3 — validated technical performance score','Other / unclear'])
+            with c2: pick('Kirkpatrick level',['KP1 Reaction','KP2 Learning','KP3 Behaviour','KP4 Results','N/A / unclear'])
+        fmt = pick('Original reporting format',list(FORMATS),help='Keep source values. No median-to-mean or CI-to-SD conversion is done here.')
+        primary = [f for f in FORMATS.get(fmt,[]) if f != 'N analyzed']
+        if primary:
+            cols = st.columns(min(len(primary),3))
+            for i,f in enumerate(primary):
+                with cols[i % len(cols)]: number(f)
+        with st.expander('Additional statistics (only if reported)',expanded=False):
+            rest = [f for f in NUMERIC_FIELDS if f not in primary]
+            cols = st.columns(3)
+            for i,f in enumerate(rest):
+                with cols[i%3]: number(f)
+        c1,c2,c3 = st.columns(3)
+        with c1:
+            r['N analyzed'] = st.number_input('N analyzed',value=None,min_value=1,step=1,key=prefix+'N analyzed')
+        with c2: pick('N unit',['Individuals','Teams','Simulations / team-events','Action opportunities','Other / unclear'])
+        with c3: txt('Measurement unit',help='E.g. %, proportion 0–1, score points, seconds, min.seconds. Keep source units.')
+        txt('Estimate type / comparison',help='For effects: measure, comparator and scale, e.g. adjusted OR vs no aid. For model means: model name.')
+        r['Raw reported statistics'] = st.text_area('Raw reported statistics (optional unless figure/other)',key=prefix+'Raw reported statistics',
+            help='Preserve exact notation, extra statistics, or text-only findings here. No invented numbers.')
+        txt('Source',help='Page/table/figure/supplement identifying this result.')
+        r['Comments'] = st.text_area('Comments',key=prefix+'Comments',help='Missing statistics, differing N, selected analysis, or source conflicts.')
+        r['Source conflict confirmed'] = st.checkbox('I checked an ordering conflict against the source; preserve the printed values',key=prefix+'Source conflict confirmed')
+        if r['Source conflict confirmed']:
+            r['Comments'] = '[Source ordering conflict confirmed] '+r['Comments'] if r['Comments'].strip() else ''
+    return r
+
+
+def main():
+    st.set_page_config(page_title='Cognitive Aids NMA Extraction v6.0',layout='wide')
+    st.title('Cognitive Aids NMA — Data Extraction (v6.0)')
+    st.info('One arm per submission. In Tab 4, use ＋ Add result for additional selected outcomes or scenarios. '
+            'Keep statistics as reported. Use the same arm numbering as your co-reviewer. Nothing is saved until Submit.')
+    controls = st.columns(2)
+    with controls[0]: st.button('Start next arm — clear arm/outcome fields',on_click=clear_draft,args=(False,))
+    with controls[1]: st.button('Start new study — clear draft',on_click=clear_draft,args=(True,))
+    st.caption('These buttons clear the current draft immediately. Next arm keeps study fields and clears arm-specific and quality fields. Browser refresh also discards unsaved input.')
+    try:
+        book = open_book()
+        main_title = st.secrets.get('arms_sheet_name','')
+        worksheet = book.worksheet(main_title) if main_title else book.sheet1
+        if worksheet.title == OUTCOMES_TAB:
+            raise ValueError('Set arms_sheet_name to the existing 87-column tab in secrets.')
+    except Exception as exc:
+        st.error('Cannot connect to the spreadsheet. Check the existing service-account secrets and access. '+str(exc))
+        st.stop()
+    with st.expander('One-time setup: Outcomes tab'):
+        st.caption('The existing 87-column tab is preserved. This button creates Outcomes with the required headers, or checks an existing Outcomes tab.')
+        if st.button('Create / check Outcomes tab',key='setup_outcomes'):
+            try:
+                ensure_outcomes(book,worksheet)
+                st.success('Outcomes is ready. No study data were added.')
+            except Exception as exc:
+                st.error(str(exc))
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📑 1. Study & Population",
@@ -328,14 +519,8 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             # Study types: RCT designs only (observational/pilot removed)
             study_type = st.selectbox(
                 "Study Type ★",
-                ["Parallel RCT", "Crossover RCT", "Cluster RCT", "Other"],
-                help="Code what was ACTUALLY done, not the paper's self-description. "
-                     "Team allocation by itself is NOT a cluster design: choose "
-                     "Cluster RCT only when groups were allocated and the outcome is "
-                     "analysed at a LOWER level than the allocated unit (e.g. wards "
-                     "allocated, individuals analysed). If allocation and analysis are "
-                     "both at team level, this is a parallel trial with the team as the "
-                     "unit of observation.",
+                ["Parallel RCT", "Crossover RCT", "Cluster RCT", "Other", "Unclear"],
+                help="Record the actual allocation design. Analysis at cluster level does not change a cluster-randomised design into a parallel individual trial. Record allocation and analysis units separately; describe repeated conditions in the log.",
                 key="study_type",
                 index=None,
                 placeholder="— select —",
@@ -352,17 +537,17 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             )
             scenario = st.text_input("Scenario (e.g., MH, cardiac arrest)", key="scenario")
         with c3:
-            total_n = st.number_input("Total N (all arms)", min_value=0, value=None,
+            total_n = st.number_input("Total N (all arms)", min_value=1, value=None,
                                       step=1, placeholder="— enter N —", key="total_n",
                                       help="In the unit the authors computed the effect "
                                            "size on. Record the other totals "
                                            "(randomised vs analysed, people vs teams) in "
-                                           "the Coding uncertainty log.")
-            arm_n = st.number_input("★ N (this arm)", min_value=0, value=None,
+                                           "the Coding uncertainty log. For crossover/repeated conditions, do not add the same people or teams across conditions.")
+            arm_n = st.number_input("N (this arm) ★ — or explain missing N in the log", min_value=1, value=None,
                                     step=1, placeholder="— enter N —", key="arm_n",
                                     help="Same unit as Total N. If an individual outcome "
                                          "is analysed on a different number, record that "
-                                         "in that outcome's own 'N analyzed' box.")
+                                         "in that outcome's own 'N analyzed' box. If unavailable or conflicting, leave blank and explain in the uncertainty log.")
 
         st.markdown("---")
         st.subheader("Simulation Context")
@@ -427,7 +612,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
         with p1:
             unit_random = st.selectbox(
                 "Unit of randomisation ★",
-                ["Individual (single-provider)", "Team (multi-provider)", "Cluster", "Unclear"],
+                ["Individual (single-provider)", "Team (multi-provider)", "Cluster", "Simulation / team-event", "Other", "Unclear"],
                 help="What was RANDOMLY ALLOCATED to arms (the design's unit). For a "
                      "cluster RCT this is the cluster (ward/centre/session); it can "
                      "differ from the unit the OUTCOME is analysed at — record that "
@@ -438,7 +623,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             )
             unit_analysis = st.selectbox(
                 "★ Unit of analysis",
-                ["Individual (single-provider)", "Team (multi-provider)", "Cluster", "Unclear"],
+                ["Individual (single-provider)", "Team (multi-provider)", "Cluster", "Simulation / team-event", "Other", "Unclear"],
                 help="The unit the effect size / N is computed on (one data point = ?). "
                      "Often equals the randomisation unit, but NOT always: e.g. cluster- "
                      "randomised yet analysed per individual. A MISMATCH is the thing "
@@ -473,7 +658,7 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
         st.markdown("---")
         st.subheader("Coding uncertainty log")
         coding_uncertainty_log = st.text_area(
-            "If any field was coded as 'Unclear' / 'Not reported', note WHY here:",
+            "Unclear decisions, conflicting data, or analysis/unit notes (one line each):",
             height=120,
             key="coding_uncertainty_log",
             placeholder=(
@@ -509,10 +694,8 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                      "If you genuinely cannot tell, pick the closest node, start the "
                      "rationale with 'NODE UNCERTAIN' and explain in the uncertainty log.",
                 key="nma_node", index=None, placeholder="— select —")
-            arm_no = st.number_input("★ Arm No.", 1, 10, 1, key="arm_no",
-                help="Project convention: Control = 1, Static = 2, Dynamic = 3, so the "
-                     "R analysis sees a consistent order. If a study has TWO arms of the "
-                     "same node, distinguish them in Arm Label and flag it in the log.")
+            arm_no = st.number_input("★ Arm No.", min_value=1, value=1, step=1, key="arm_no",
+                help="Use a unique number within this study (1, 2, 3...). Both reviewers must use the same Arm Label-to-number mapping; default to paper order. This is not the NMA node code.")
         with n2:
             node_rationale = st.text_area("★ Node rationale (1 line + source)", height=68,
                 key="node_rationale",
@@ -619,14 +802,12 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
             fidelity_check = st.selectbox("CA use fidelity check (was actual use monitored?) ★",
                 ["Yes — quantitative (e.g., observed/timed use)",
                  "Yes — ordinal scale (e.g., 0–5 rating)",
-                 "Yes — qualitative only", "No (not reported)", "Unclear", "N/A (Control)"],
-                help="'No (not reported)' covers both 'the authors checked and report "
-                     "nothing' and 'the authors never checked'. Say which in the "
-                     "implementation narrative.",
+                 "Yes — qualitative only", "Not reported", "Explicitly not checked", "Unclear", "N/A (Control)"],
+                help="Use Not reported for silence; Explicitly not checked only when the authors say so.",
                 key="fidelity_check", index=None, placeholder="— select —")
         with e2:
             fidelity_rate = st.text_input(
-                "CA use fidelity rate (%)",
+                "CA use fidelity value (include its unit)",
                 help="Gated by 'CA use fidelity check'. Required ONLY when the check = "
                      "'Yes — quantitative'. For any other check value leave blank — the "
                      "blank is explained by the check field, not an unrecorded value. "
@@ -648,263 +829,46 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
     # TAB 4 — OUTCOMES
     # -------------------------------------------------------------------------
     with tab4:
-        with st.expander("💡 Median → Mean/SD Converter (sanity check only — do NOT paste results into the sheet)"):
-            st.caption("Project policy: extractors record the RAW statistics; conversion "
-                       "is done once, centrally, on the consensus data. Use this only to "
-                       "see roughly what a value will become.")
-            cvt_method = st.radio("Pick reported statistic:",
-                ["Wan 2014 — median + Q1 + Q3 (IQR)",
-                 "Hozo 2005 — median + min + max (range)",
-                 "Luo 2018 mean + Hozo 2005 SD — median + min + max (range)"],
-                key="cvt_method")
-            # Dynamic labels per method
-            if cvt_method.startswith("Wan"):
-                lo_label, hi_label = "Q1 (lower quartile)", "Q3 (upper quartile)"
-            else:
-                lo_label, hi_label = "min", "max"
-            cv1, cv2, cv3, cv4 = st.columns(4)
-            with cv1: cv_med = st.number_input("Median", value=0.0, format="%.4f", key="cv_med")
-            with cv2: cv_a = st.number_input(lo_label, value=0.0, format="%.4f", key="cv_a")
-            with cv3: cv_b = st.number_input(hi_label, value=0.0, format="%.4f", key="cv_b")
-            with cv4: cv_n = st.number_input("n", min_value=1, value=10, key="cv_n")
+        st.caption('Leave absent statistics blank; never substitute zero for missing SD. Keep per-scenario results and author-reported combined summaries distinct. Do not average during extraction. '
+                   'Only extract prespecified items; do not treat a total and its components as independent contributions.')
+        outcome_records = []
+        gates = {}
+        for domain, gate_key in DOMAINS.items():
+            st.subheader({'Adherence':'Outcome 1 — Adherence / task completion',
+                          'Time':'Outcome 2 — Time', 'Error':'Outcome 3 — Error',
+                          'NTS':'Outcome 4 — Teamwork / NTS'}[domain])
+            gates[domain] = st.selectbox(f'★ {domain} reported?',GATE_OPTS,index=None,placeholder='— select —',key=gate_key,
+                help='Reported: results available. Partially reported: some statistics absent. Use the other states for silence, explicitly not measured, measured but not extractable, or uncertainty.')
+            ids = st.session_state.setdefault('_ids_'+domain,[])
+            if gates[domain] in GATE_ACTIVE:
+                if not ids:
+                    add_result(domain)
+                st.button('＋ Add result',key='add_'+domain,on_click=add_result,args=(domain,))
+            elif ids:
+                st.warning('Existing result cards are still shown. Remove them explicitly or restore the reporting status before submitting.')
+            for i,rid in enumerate(list(st.session_state['_ids_'+domain]),1):
+                outcome_records.append(render_result(domain,rid,i))
+        adh_gate, time_gate, err_gate, nts_gate = [gates[d] for d in DOMAINS]
+        st.subheader('Outcome 5 — Simulated patient outcome (descriptive only)')
+        simpt_gate = st.selectbox('★ Simulated patient outcome reported?',GATE_OPTS,index=None,placeholder='— select —',key='simpt_gate')
+        simpt_desc = st.text_area('Simulated patient outcome description',key='simpt_desc',
+            help='Record observed numbers and denominators, source and whether script-determined. A scripted ROSC or preset stop time alone is not an observed outcome.')
 
-            if st.form_submit_button("📐 Compute"):
-                try:
-                    def _hozo_sd(a, m, b, n):
-                        """Hozo 2005 range-based SD.
-
-                        v5.4 fix: for n <= 15 the original estimator is
-                            sqrt( ( (a - 2m + b)^2 / 4 + (b - a)^2 ) / 12 )
-                        which collapses to range/(2*sqrt(3)) only when the median lies
-                        exactly at the centre of the range. v5.3 applied the collapsed
-                        form to every small sample, understating SD for skewed data.
-                        """
-                        if n <= 15:
-                            sd = math.sqrt((((a - 2 * m + b) ** 2) / 4 + (b - a) ** 2) / 12)
-                            return sd, "n≤15: Hozo eq. with median-position term"
-                        elif n <= 70:
-                            return (b - a) / 4, "15<n≤70: range/4"
-                        else:
-                            return (b - a) / 6, "n>70: range/6"
-
-                    if cvt_method.startswith("Wan"):
-                        # Wan 2014, median + IQR (Eq. 14 mean, Eq. 16 SD)
-                        mean_est = (cv_a + cv_med + cv_b) / 3
-                        xi = 2 * _norm_ppf((0.75 * cv_n - 0.125) / (cv_n + 0.25))
-                        sd_est = (cv_b - cv_a) / xi
-                        method_used = f"Wan 2014 IQR (η={xi:.3f})"
-                    elif cvt_method.startswith("Hozo"):
-                        # Hozo 2005, median + range
-                        mean_est = (cv_a + 2 * cv_med + cv_b) / 4
-                        sd_est, sd_rule = _hozo_sd(cv_a, cv_med, cv_b, cv_n)
-                        method_used = f"Hozo 2005 ({sd_rule})"
-                    else:
-                        # Luo 2018 mean (range) + Hozo 2005 SD (range) — consistent range basis
-                        w = 4 / (4 + cv_n ** 0.75)
-                        mean_est = w * (cv_a + cv_b) / 2 + (1 - w) * cv_med
-                        sd_est, sd_rule = _hozo_sd(cv_a, cv_med, cv_b, cv_n)
-                        method_used = f"Luo 2018 mean + Hozo 2005 SD ({sd_rule})"
-                    st.success(f"**Mean ≈ {mean_est:.3f} | SD ≈ {sd_est:.3f}** ({method_used})")
-                    st.caption("Record the RAW statistics in the sheet, not this result.")
-                except Exception as e:
-                    st.error(f"Calc error: {e}")
-
-        st.markdown("---")
-        st.markdown("### Outcome 1 — Adherence / task completion (★ PRIMARY, continuous, SMD)")
-        adh_gate = st.selectbox("★ Adherence reported?", GATE_OPTS,
-            help="**Reported** = usable numbers present. "
-                 "**Partially reported** = some statistics present, others absent "
-                 "(e.g. a mean but no SD) — use this instead of typing 0. "
-                 "**Not reported (paper silent)** = the paper says nothing; this is the "
-                 "default for silence. "
-                 "**Explicitly not measured** = the paper STATES it did not assess this. "
-                 "**Measured – not extractable** = assessed but no usable numbers "
-                 "(→ author-contact candidate). "
-                 "**Unclear** = cannot tell from the text.",
-            key="adh_gate", index=None, placeholder="— select —")
-        st.caption("Record the RAW values as reported. Direction harmonisation (so higher = better) is done at the ANALYSIS stage, not here — you only record the value + which direction it represents.")
-        adh_direction = st.radio("★ Outcome direction",
-            ["Higher = better (e.g., % steps completed, checklist score)",
-             "Lower = better (e.g., % steps missed, failure rate)",
-             "N/A — outcome not extracted in this arm"],
-            horizontal=True, key="adh_direction", index=None)
-
-        # v5.3 — record WHICH measure in the protocol hierarchy this value is, plus its
-        # instrument + scale, so a study contributing multiple adherence-type measures
-        # has a documented one-measure-per-study choice and cross-instrument SMD context.
-        at1, at2, at3 = st.columns(3)
-        with at1:
-            adh_tier = st.selectbox("★ Adherence measure tier",
-                ["Tier 1 — steps completed/missed (proportion)",
-                 "Tier 2 — checklist-based adherence score",
-                 "Tier 3 — validated technical performance score",
-                 "Other / composite"],
-                help="Record the tier of the value you extracted. NOTE: the Tier 1 > 2 > 3 "
-                     "preference is NOT stated in the current protocol — prefer the "
-                     "measure the STUDY designated as primary, and record in comments why "
-                     "you chose the one you did.",
-                key="adh_tier", index=None, placeholder="— select —")
-        with at2:
-            adh_instrument = st.text_input("Adherence instrument",
-                help="Name of the checklist / scale (e.g., study-specific checklist, "
-                     "c-DEV15plus, TAPAS). Required for Tier 3 (validated scores are "
-                     "named); optional for Tier 1/2. Note OSCAR is a NON-technical "
-                     "skills instrument and belongs under NTS, not here.",
-                key="adh_instrument")
-        with at3:
-            adh_scalemax = st.number_input("Adherence scale max",
-                value=None, min_value=0.0, format="%.4f",
-                help="Maximum possible value of the scale (denominator). Required for "
-                     "Tier 2 & Tier 3 to interpret a raw score across instruments; leave "
-                     "blank for a proportion (implicit 0–100).",
-                key="adh_scalemax")
-
-        o1c1, o1c2, o1c3 = st.columns(3)
-        with o1c1: adh_mean = st.number_input("★ Mean", value=None, format="%.4f", key="adh_mean")
-        with o1c2: adh_sd = st.number_input("★ SD", value=None, min_value=0.0, format="%.4f", key="adh_sd")
-        with o1c3: adh_n = st.number_input("★ N analyzed (this arm)", value=None, min_value=0, step=1, key="adh_n")
-        # v5.4 C: this caption used to sit inside the `if submitted:` block, so it only
-        # appeared under the Submit button AFTER submission. It belongs here.
-        st.caption("**SD not reported? Leave it blank, set the gate to 'Partially reported' "
-                   "and say so in Adherence comments. NEVER type 0** — a zero SD makes the "
-                   "study look infinitely precise and it will dominate the meta-analysis. "
-                   "Do not back-calculate an SD from a CI on a transformed scale.")
-        o1c4, o1c5 = st.columns(2)
-        with o1c4:
-            adh_orig = st.selectbox("Original reporting format",
-                ["mean ± SD", "median + IQR", "median + range", "%/proportion", "Other", "Not extractable"],
-                key="adh_orig", index=None, placeholder="— select —")
-            adh_raw = st.text_input("Raw median stats (median; Q1–Q3 OR min–max; n)", key="adh_raw",
-                help="Type every statistic the paper prints, verbatim — e.g. "
-                     "'median 80; Q1 70; Q3 90; n 30'. Check Q1 ≤ median ≤ Q3; if the "
-                     "source contradicts itself, enter it as printed and flag it in the log.")
-        with o1c5:
-            adh_conv = st.selectbox("Conversion method (if median→mean)",
-                ["N/A — reported as mean", "Wan 2014 (median+IQR)", "Hozo 2005 (median+range)", "Luo 2018", "Other"],
-                help="This records WHICH method will be applied centrally. It is not a "
-                     "statement that you converted anything.",
-                key="adh_conv", index=None, placeholder="— select —")
-            adh_kp = st.selectbox("Kirkpatrick level",
-                ["KP1 Reaction", "KP2 Learning", "KP3 Behaviour", "KP4 Results", "N/A"],
-                help="Simulated patient states (e.g. simulated ROSC) are NOT KP4 — a "
-                     "simulated patient is not a patient.",
-                key="adh_kp", index=None, placeholder="— select —")
-        adh_comments = st.text_input("Adherence comments", key="adh_comments",
-            help="Required when SD is blank. Also use it for: the measure you chose and "
-                 "why; values from a second analysis set (ITT vs per-protocol); the "
-                 "source page and table.")
-
-        st.markdown("---")
-        st.markdown("### Outcome 2 — Time to critical action (SECONDARY, continuous)")
-        time_gate = st.selectbox("★ Time reported?", GATE_OPTS,
-            key="time_gate", index=None, placeholder="— select —")
-        st.caption("This block holds ONE timing. If the paper reports several, enter the "
-                   "selected one here and list the rest in Time comments in a fixed "
-                   "format. Record the time origin and endpoint — and if the value is "
-                   "defined only for participants who performed the action, put the "
-                   "number who performed it in 'N analyzed' and flag the conditional "
-                   "comparison in comments.")
-        o2c1, o2c2, o2c3 = st.columns(3)
-        with o2c1: time_mean = st.number_input("Mean (seconds)", value=None, format="%.4f", key="time_mean")
-        with o2c2: time_sd = st.number_input("SD (seconds)", value=None, min_value=0.0, format="%.4f", key="time_sd")
-        with o2c3: time_n = st.number_input("N analyzed", value=None, min_value=0, step=1, key="time_n",
-            help="For a performers-only outcome this is the number who performed the "
-                 "action, not the arm N. Never impute 0 or a time limit for "
-                 "non-performers.")
-        o2c4, o2c5 = st.columns(2)
-        with o2c4:
-            time_orig = st.selectbox("Original reporting format",
-                ["mean ± SD", "median + IQR", "median + range", "Other", "Not reported"],
-                key="time_orig", index=None, placeholder="— select —")
-        with o2c5:
-            time_raw = st.text_input("Raw median stats (if median)", key="time_raw",
-                help="Watch the notation: '2.46' in minutes.seconds is 2 min 46 s = 166 s, "
-                     "not 2.46 minutes. Enter the printed number and state the notation "
-                     "in Time comments.")
-            time_conv = st.selectbox("Conversion method",
-                ["N/A", "Wan 2014", "Hozo 2005", "Luo 2018", "Other"],
-                key="time_conv", index=None, placeholder="— select —")
-        time_comments = st.text_input("Time comments", key="time_comments",
-            help="SELECTED: <action> | origin | endpoint | source. "
-                 "Then ALSO REPORTED: the other timings, one per line. "
-                 "Flag performers-only comparisons here.")
-
-        st.markdown("---")
-        st.markdown("### Outcome 3 — Error rate (SECONDARY, dichotomous)")
-        err_gate = st.selectbox("★ Error reported?", GATE_OPTS,
-            key="err_gate", index=None, placeholder="— select —")
-        st.caption("Extract raw EVENTS + N. The pooled effect measure for the NMA is RR, "
-                   "computed from events/N at the analysis stage. **Events are counts, not "
-                   "percentages** — if the paper prints 12.5% of 16, the count is 2. A "
-                   "summed deviation score belongs in Outcome 1, not here.")
-        e3c1, e3c2, e3c3 = st.columns(3)
-        with e3c1: err_events = st.number_input("★ Events (this arm)", value=None, min_value=0, step=1, key="err_events",
-            help="An integer count of events. If the paper gives only a percentage, "
-                 "convert only when the denominator makes the integer unique, and record "
-                 "both in Error comments.")
-        with e3c2: err_n = st.number_input("★ N analyzed (this arm)", value=None, min_value=0, step=1, key="err_n")
-        with e3c3:
-            err_measure = st.selectbox("Measure as reported in paper",
-                ["Raw counts / events given", "RR reported", "OR reported",
-                 "Other relative measure", "Not reported"],
-                help="What did the paper itself report? If raw counts/events are available, prefer those (enter Events + N on the left); we compute RR ourselves. Record OR only if that is all the paper provides.",
-                key="err_measure", index=None, placeholder="— select —")
-        err_orig = st.text_input("Original reporting (free text — e.g., 'OR 2.3 (1.1–4.8)')", key="err_orig")
-        err_comments = st.text_input("Error comments", key="err_comments")
-
-        st.markdown("---")
-        st.markdown("### Outcome 4 — Teamwork / NTS (separate analysis)")
-        nts_gate = st.selectbox("★ NTS reported?", GATE_OPTS,
-            help="NTS = NON-TECHNICAL skills: teamwork, leadership, situation awareness, "
-                 "communication. A clinical performance score is technical performance "
-                 "and belongs in Outcome 1. NASA-TLX is workload and SUS is usability — "
-                 "neither is NTS.",
-            key="nts_gate", index=None, placeholder="— select —")
-        nts1, nts2, nts3 = st.columns(3)
-        with nts1: nts_mean = st.number_input("Mean", value=None, format="%.4f", key="nts_mean")
-        with nts2: nts_sd = st.number_input("SD", value=None, min_value=0.0, format="%.4f", key="nts_sd")
-        with nts3: nts_n = st.number_input("N analyzed", value=None, min_value=0, step=1, key="nts_n")
-        nts_instrument = st.text_input("Instrument", key="nts_instrument")
-        nts_comments = st.text_input("NTS comments", key="nts_comments",
-            help="Record the subscale, scale range and direction here — the instrument "
-                 "name alone is not enough to interpret the score.")
-
-        st.markdown("---")
-        st.markdown("### Outcome 5 — Simulated patient outcome (SECONDARY, DESCRIPTIVE ONLY — never pooled)")
-        simpt_gate = st.selectbox("★ Simulated patient outcome reported?", GATE_OPTS,
-            help="Pick 'Reported' if the study reports a simulated-patient-level outcome "
-                 "(e.g., simulated survival / ROSC as a patient state, simulated "
-                 "complication or harm) — even if the authors do not list it as a formal "
-                 "outcome, as long as the numbers are there. Use 'Not reported (paper "
-                 "silent)' when the paper says nothing.",
-            key="simpt_gate", index=None, placeholder="— select —")
-        st.caption("By protocol this outcome is DESCRIPTIVE ONLY and is NOT pooled — so "
-                   "there is deliberately no mean/SD/N block. **Still record the reported "
-                   "numbers and their denominator in the text below** so they are not "
-                   "lost; just mark them as not pooled. Also note if the outcome was "
-                   "determined by the scenario script rather than measured independently.")
-        simpt_desc = st.text_area(
-            "Simulated patient outcome description (required if 'Reported' / 'Partially reported')",
-            height=80, key="simpt_desc",
-            placeholder="e.g. ROSC achieved: 25/32 (app), 10/35 (paper), 6/33 (none). "
-                        "Supplement eTable 3. Descriptive only — not pooled. Authors note "
-                        "ROSC followed from correct task completion in the scripted scenario.")
-
-    # -------------------------------------------------------------------------
-    # TAB 5 — RoB & QUALITY  (study-level — assess once per study, normally Arm 1)
-    # -------------------------------------------------------------------------
+    # Bind populated cards to their study/reviewer/phase/arm. Manual identity changes must not relabel them.
+    identity = (study_id, phase, reviewer, arm_no)
+    identity_complete = all(v is not None for v in identity)
+    has_result_content = any(any(has_value(r.get(f)) for f in ['Outcome name','Raw reported statistics',*NUMERIC_FIELDS]) for r in outcome_records)
+    if identity_complete and has_result_content and '_outcome_context' not in st.session_state:
+        st.session_state['_outcome_context'] = identity
+    context_changed = '_outcome_context' in st.session_state and st.session_state['_outcome_context'] != identity
+    if context_changed:
+        st.warning('Study/reviewer/phase/arm changed while outcome data remain. Restore the original identity or use Start next arm / Start new study.')
     with tab5:
         st.info("ℹ️ **RoB-2 and MERSQI are entered ONCE per study** (normally on Arm 1). "
-                "On later arms of the same study leave these blank — they are optional "
+                "On later arms leave these blank unless assessing a different RoB result — they are optional "
                 "and will not block submission.")
         st.subheader("RoB-2 (for RCTs)")
-        st.caption("RoB-2 assesses a specific RESULT, not a study. Until this form is "
-                   "restructured, assess against the **primary adherence outcome** and "
-                   "write on the first line of the comments box which outcome and which "
-                   "analysis set you assessed — e.g. 'Assessed for: overall adherence, "
-                   "ITT analysis'. Give a rationale for EVERY domain, **including the ones "
-                   "you rate Low**. Crossover and cluster designs need a different RoB-2 "
-                   "version; say which you used.")
+        st.caption("Assess the review-selected result; state outcome ID/name, scenario, analysis population and RoB 2 version in comments. MERSQI is recorded once per study.")
         rob_levels = ["Low", "Some concerns", "High"]
         rc1, rc2 = st.columns(2)
         with rc1:
@@ -922,54 +886,65 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
 
         st.markdown("---")
         st.subheader("MERSQI (medical education research quality)")
-        st.caption("Two options below do not match the original instrument. **Sampling**: "
-                   "the original scores institutions (0.5/1.0/1.5) and response rate "
-                   "(0.5/1.0/1.5) SEPARATELY and sums them — a single-institution study "
-                   "with ≥75% response should total 2.0, but the nearest option here gives "
-                   "1.5. **Data analysis**: the original scores appropriateness and "
-                   "sophistication separately, not 'complex model = 3'. Pick the closest "
-                   "option, then write the correct breakdown in the comments box. The "
-                   "sheet stores only the total, so **write all six domain scores and your "
-                   "reasoning in the comments** or the second reviewer cannot see where "
-                   "you differ.")
+        st.caption("Scores are calculated and saved automatically. Use comments for the assessed instrument, completion numerator/denominator and brief reasons.")
         mq1, mq2 = st.columns(2)
         with mq1:
             mersqi_design = st.selectbox("1. Study design",
                 [(1.0, "Single group, post-test only"), (1.5, "Single group, pre-post"),
                  (2.0, "Non-randomised 2-group"), (3.0, "Randomised controlled trial (RCT)")],
                 format_func=lambda x: f"{x[0]} — {x[1]}", key="mersqi_design", index=None, placeholder="— select —")
-            mersqi_sampling = st.selectbox("2. Sampling (institutions + response rate)",
-                [(0.5, "1 institution OR response <50%"), (1.0, "1 institution + response 50–74%"),
-                 (1.5, "1 inst. + response ≥75%, OR 2 inst. + response 50–74%"),
-                 (2.0, "2 institutions + response ≥75%"), (2.5, "≥3 institutions + response 50–74%"),
-                 (3.0, "≥3 institutions + response ≥75%")],
-                format_func=lambda x: f"{x[0]} — {x[1]}", key="mersqi_sampling", index=None, placeholder="— select —")
+
+            st.markdown("**2. Sampling** — scored as institutions + completion rate")
+            mersqi_inst = st.selectbox("2a. Number of institutions",
+                [(0.5, "1 institution"), (1.0, "2 institutions"), (1.5, "≥3 institutions")],
+                format_func=lambda x: f"{x[0]} — {x[1]}", key="mersqi_inst", index=None, placeholder="— select —")
+            mersqi_resp = st.selectbox("2b. Completion rate",
+                [(0.5, "<50% or not reported"), (1.0, "50–74%"), (1.5, "≥75%")],
+                help="For an intervention study this is the proportion of those ENROLLED "
+                     "who completed the evaluation — not the proportion of those invited "
+                     "who agreed to take part. A trial where every enrolled participant "
+                     "completed the scenario scores ≥75%, even if many declined "
+                     "recruitment. Record the numerator and denominator you used in the "
+                     "comments box.",
+                format_func=lambda x: f"{x[0]} — {x[1]}", key="mersqi_resp", index=None, placeholder="— select —")
+
             mersqi_data = st.selectbox("3. Type of data",
                 [(1.0, "Subjective only (self-reported)"), (3.0, "Objective (observed/measured)")],
                 format_func=lambda x: f"{x[0]} — {x[1]}", key="mersqi_data", index=None, placeholder="— select —")
         with mq2:
-            mersqi_validity = st.selectbox("4. Validity of evaluation instrument",
-                [(0.0, "None of content/structure/relationships reported"),
-                 (1.0, "1 of 3 validity dimensions reported"),
-                 (2.0, "2 of 3 validity dimensions reported"),
-                 (3.0, "All 3 (content + internal structure + relationships)")],
-                help="Score the instrument used for the PRIMARY ADHERENCE outcome only — "
-                     "not NASA-TLX, not SUS.\n\n"
-                     "• **Content**: items built from existing guidelines or established "
-                     "evidence.\n"
-                     "• **Internal structure**: internal reliability or inter-rater "
-                     "agreement reported.\n"
-                     "• **Relationships to other variables**: the INSTRUMENT'S SCORES "
-                     "analysed against external variables. Scored on whether it is "
-                     "REPORTED, not on whether it was significant — a non-significant "
-                     "correlation still earns the point. A baseline-characteristics "
-                     "comparison between arms does NOT count.\n\n"
-                     "Record which of the three you awarded, and why, in the comments.",
-                format_func=lambda x: f"{x[0]} — {x[1]}", key="mersqi_validity", index=None, placeholder="— select —")
-            mersqi_analysis = st.selectbox("5. Data analysis (appropriateness + sophistication)",
-                [(1.0, "Appropriate, descriptive only"), (2.0, "Appropriate, beyond descriptive (inferential)"),
-                 (3.0, "Appropriate + sophisticated (e.g., multivariable / mixed)")],
-                format_func=lambda x: f"{x[0]} — {x[1]}", key="mersqi_analysis", index=None, placeholder="— select —")
+            st.markdown("**4. Validity of the evaluation instrument** — three components, 0 or 1 each")
+            st.caption("Name the review-relevant performance instrument you assessed in comments; it may be an NTS instrument when no adherence score exists.")
+            mersqi_v_content = st.selectbox("4a. Content",
+                [(0.0, "Not reported"), (1.0, "Reported")],
+                help="Items built from existing guidelines, published checklists or "
+                     "established evidence; expert panel review.",
+                format_func=lambda x: f"{x[0]} — {x[1]}", key="mersqi_v_content", index=None, placeholder="— select —")
+            mersqi_v_struct = st.selectbox("4b. Internal structure",
+                [(0.0, "Not reported"), (1.0, "Reported")],
+                help="Internal reliability, or inter-rater agreement (κ, ICC, CCC).",
+                format_func=lambda x: f"{x[0]} — {x[1]}", key="mersqi_v_struct", index=None, placeholder="— select —")
+            mersqi_v_rel = st.selectbox("4c. Relationships to other variables",
+                [(0.0, "Not reported"), (1.0, "Reported")],
+                help="The INSTRUMENT'S SCORES analysed against external variables. "
+                     "Scored on whether it is REPORTED, not on whether it reached "
+                     "significance — a non-significant correlation still earns the "
+                     "point. A comparison of baseline characteristics between arms does "
+                     "NOT count, and neither does a subgroup analysis that compares the "
+                     "treatments within strata rather than relating scores to an "
+                     "external criterion.",
+                format_func=lambda x: f"{x[0]} — {x[1]}", key="mersqi_v_rel", index=None, placeholder="— select —")
+
+            st.markdown("**5. Data analysis** — appropriateness + sophistication")
+            mersqi_a_approp = st.selectbox("5a. Appropriateness",
+                [(0.0, "Inappropriate for the study design or type of data"),
+                 (1.0, "Appropriate for the study design and type of data")],
+                format_func=lambda x: f"{x[0]} — {x[1]}", key="mersqi_a_approp", index=None, placeholder="— select —")
+            mersqi_a_soph = st.selectbox("5b. Sophistication",
+                [(1.0, "Descriptive analysis only"), (2.0, "Beyond descriptive (inferential)")],
+                help="This is not a 'complex model scores higher' scale. Any inferential "
+                     "analysis scores 2.0.",
+                format_func=lambda x: f"{x[0]} — {x[1]}", key="mersqi_a_soph", index=None, placeholder="— select —")
+
             mersqi_outcomes = st.selectbox("6. Outcomes (highest level only)",
                 [(1.0, "Satisfaction / attitudes / opinions"), (1.5, "Knowledge / skills"),
                  (2.0, "Behaviours (in practice)"), (3.0, "Patient / healthcare outcomes")],
@@ -977,193 +952,220 @@ with st.form("extraction_form", clear_on_submit=False, enter_to_submit=False):
                      "3.0 for simulated ROSC.",
                 format_func=lambda x: f"{x[0]} — {x[1]}", key="mersqi_outcomes", index=None, placeholder="— select —")
 
-        _mersqi_subscores = [mersqi_design, mersqi_sampling, mersqi_data, mersqi_validity, mersqi_analysis, mersqi_outcomes]
-        if any(s is None for s in _mersqi_subscores):
+        # Ten inputs across the six MERSQI domains (max 18).
+        _mersqi_items = [
+            ("1 Design",              mersqi_design),
+            ("2a Institutions",       mersqi_inst),
+            ("2b Completion rate",    mersqi_resp),
+            ("3 Type of data",        mersqi_data),
+            ("4a Content",            mersqi_v_content),
+            ("4b Internal structure", mersqi_v_struct),
+            ("4c Relationships",      mersqi_v_rel),
+            ("5a Appropriateness",    mersqi_a_approp),
+            ("5b Sophistication",     mersqi_a_soph),
+            ("6 Outcomes",            mersqi_outcomes),
+        ]
+        _mersqi_subscores = [v for _, v in _mersqi_items]
+        _n_mersqi = sum(1 for v in _mersqi_subscores if v is not None)
+
+        if _n_mersqi == 0:
             mersqi_total = ""
-            _n_done = sum(1 for s in _mersqi_subscores if s is not None)
-            if _n_done > 0:
-                st.warning(f"⚠️ MERSQI partial: {_n_done}/6 domains selected. Complete all 6 (study-level) or leave all blank on duplicate arms.")
+            _mersqi_detail = ""
+        elif _n_mersqi < len(_mersqi_items):
+            mersqi_total = ""
+            _mersqi_detail = ""
+            st.warning(f"⚠️ MERSQI partial: {_n_mersqi}/{len(_mersqi_items)} items selected. "
+                       "Complete all of them (study-level) or leave all blank on duplicate arms.")
         else:
-            mersqi_total_num = sum(s[0] for s in _mersqi_subscores)
-            mersqi_total = f"{mersqi_total_num:.1f}"
+            _tot = sum(v[0] for v in _mersqi_subscores)
+            mersqi_total = round(_tot, 1)
+            _mersqi_detail = " | ".join(f"{lab}={v[0]} ({v[1]})" for lab, v in _mersqi_items)
+            _dom = {
+                "1 Design": mersqi_design[0],
+                "2 Sampling": mersqi_inst[0] + mersqi_resp[0],
+                "3 Data": mersqi_data[0],
+                "4 Validity": mersqi_v_content[0] + mersqi_v_struct[0] + mersqi_v_rel[0],
+                "5 Analysis": mersqi_a_approp[0] + mersqi_a_soph[0],
+                "6 Outcomes": mersqi_outcomes[0],
+            }
             st.info(f"📊 **MERSQI total (auto-computed): {mersqi_total} / 18**")
+            st.caption("By domain — " + " · ".join(f"{k}: {v}" for k, v in _dom.items()))
 
-        mersqi_comments = st.text_area("MERSQI comments", height=90, key="mersqi_comments",
-            placeholder="1: 3.0 RCT | 2: 0.5 (1 inst) + 1.5 (resp ≥75%) = 2.0 — form option "
-                        "gives 1.5 | 3: 3.0 objective | 4: content 1 + structure 1 + "
-                        "relationships 0 = 2.0, reasoning: ... | 5: 1 + 2 = 3.0 | "
-                        "6: 1.5 knowledge/skills")
+        mersqi_rationale = st.text_area("MERSQI comments (your reasoning only)", height=90,
+            key="mersqi_rationale",
+            help="The scores above are saved automatically. Use this box for WHY — "
+                 "especially for the three validity components and for the completion "
+                 "rate numerator/denominator you used.",
+            placeholder="4a content: checklist items drawn from published guideline "
+                        "recommendations, p.3\n"
+                        "4b structure: inter-rater CCC 0.960, p.5\n"
+                        "4c relationships: not reported — subgroup analysis compares arms "
+                        "within specialty, not instrument scores against an external "
+                        "criterion\n"
+                        "2b completion: 60/60 enrolled completed the scenario")
 
-    # =========================================================================
-    # SUBMIT
-    # =========================================================================
-    st.markdown("---")
-    submitted = st.form_submit_button("💾 Submit Arm Data")
+        # Stored as: auto-generated per-item scores, then the reviewer's reasoning.
+        # "MERSQI total (max 18)" keeps the NUMBER ONLY.
+        mersqi_comments = (f"[{_mersqi_detail}]\n{mersqi_rationale}".strip()
+                           if _mersqi_detail else mersqi_rationale)
 
+    st.markdown('---')
+    st.caption(f'{len(outcome_records)} result row(s) will be linked to this arm. Results are saved in Outcomes; legacy result cells in the 87-column tab stay empty for new submissions.')
+    submitted = st.button('💾 Submit Arm Data',key='submit_arm',disabled=bool(st.session_state.get('_saved')))
+    if st.session_state.get('_saved'):
+        st.success('Saved. Use Start next arm or Start new study for another submission.')
     if submitted:
         missing_text = []
-        if not (reviewer and str(reviewer).strip()): missing_text.append("Reviewer (Tab 1)")
-        if study_id is None: missing_text.append("Study ID (Covidence) (Tab 1)")
-        if phase is None: missing_text.append("Phase (Tab 1)")
-        if not author.strip(): missing_text.append("Lead Author (Tab 1)")
-        if year is None: missing_text.append("Publication Year (Tab 1)")
-        # v5.4 E: both are marked ★ but were never enforced. CRITICAL_FIELDS tests
-        # `val is None`, and an empty text widget returns "" rather than None.
-        if not arm_label.strip(): missing_text.append("Arm Label (Tab 2)")
-        if not node_rationale.strip(): missing_text.append("Node rationale (Tab 2)")
-
-        # Required per-ARM fields (study/intervention/implementation/outcome-gates).
-        # RoB-2 and MERSQI are STUDY-LEVEL and intentionally NOT included here.
-        CRITICAL_FIELDS = [
-            ("Study type",                 study_type,         "Tab 1"),
-            ("Setting",                    setting,            "Tab 1"),
-            ("Simulation fidelity",        sim_fidelity,       "Tab 1"),
-            ("Scenario complexity",        scen_complexity,    "Tab 1"),
-            ("Publication type",           pub_type,           "Tab 1"),
-            ("Unit of randomisation",      unit_random,        "Tab 1"),
-            ("Unit of analysis",           unit_analysis,      "Tab 1"),
-            ("Provider experience level",  exp_level,          "Tab 1"),
-            ("Team interprofessionality",  team_inter,         "Tab 1"),
-            ("NMA Node",                   nma_node,           "Tab 2"),
-            ("CA medium",                  medium,             "Tab 2"),
-            ("CA type",                    ca_type,            "Tab 2"),
-            ("CA logic structure",         ca_logic,           "Tab 2"),
-            ("Pre-training intensity",     pretrain_intensity, "Tab 3"),
-            ("Training method",            train_method,       "Tab 3"),
-            ("Training timing",            train_timing,       "Tab 3"),
-            ("Reader present",             reader_present,     "Tab 3"),
-            ("Interaction style",          interaction,        "Tab 3"),
-            ("Strictness",                 strictness,         "Tab 3"),
-            ("Enforcement",                enforcement,        "Tab 3"),
-            ("Fidelity check",             fidelity_check,     "Tab 3"),
-            # Outcome gates — all five required every arm
-            ("Adherence reported?",        adh_gate,           "Tab 4"),
-            ("Time reported?",             time_gate,          "Tab 4"),
-            ("Error reported?",            err_gate,           "Tab 4"),
-            ("NTS reported?",              nts_gate,           "Tab 4"),
-            ("Sim patient outcome reported?", simpt_gate,      "Tab 4"),
-        ]
-        # NOTE: "Adherence outcome direction" is not always-required; it is conditional
-        # on the Adherence gate being Reported / Partially reported (see below).
-
-        missing_select = [f"• **{name}** ({tab})" for name, val, tab in CRITICAL_FIELDS if val is None]
-
-        conditional_missing = []
-
-        # --- Adherence -------------------------------------------------------
-        # v5.4 B: fires on "Partially reported" too, and a blank SD is allowed when
-        # Adherence comments explains it. An UNEXPLAINED blank still blocks, so a
-        # forgotten SD is caught while a genuinely unreported SD can be recorded
-        # honestly instead of being typed as 0.
-        if adh_gate in GATE_ACTIVE:
-            if adh_direction is None: conditional_missing.append("• **Adherence outcome direction** (Tab 4)")
-            if adh_tier is None:      conditional_missing.append("• **Adherence measure tier** (Tab 4)")
-            if adh_mean is None:      conditional_missing.append("• **Adherence Mean** (Tab 4)")
-            if adh_n is None:         conditional_missing.append("• **Adherence N analyzed** (Tab 4)")
-            if adh_sd is None and not adh_comments.strip():
-                conditional_missing.append(
-                    "• **Adherence SD** is blank — enter it, or explain in "
-                    "**Adherence comments** why the paper does not report it. "
-                    "Do NOT type 0. (Tab 4)")
-            if adh_orig is None:      conditional_missing.append("• **Adherence original format** (Tab 4)")
-            # v5.4 D: these two were dropped in an earlier edit — restored.
-            if adh_conv is None:      conditional_missing.append("• **Adherence conversion method** (Tab 4)")
-            if adh_kp is None:        conditional_missing.append("• **Adherence Kirkpatrick level** (Tab 4)")
-            # Tier-conditional: validated scores are named (instrument required); scored
-            # scales (Tier 2/3) need a max to interpret; a proportion (Tier 1) does not.
-            _is_tier2 = adh_tier == "Tier 2 — checklist-based adherence score"
-            _is_tier3 = adh_tier == "Tier 3 — validated technical performance score"
-            if _is_tier3 and not adh_instrument.strip():
-                conditional_missing.append("• **Adherence instrument** — required for Tier 3 (Tab 4)")
-            if (_is_tier2 or _is_tier3) and adh_scalemax is None:
-                conditional_missing.append("• **Adherence scale max** — required for Tier 2/3 (Tab 4)")
-
-        # --- Simulated patient outcome ---------------------------------------
-        if simpt_gate in GATE_ACTIVE and not simpt_desc.strip():
-            conditional_missing.append("• **Simulated patient outcome description** (Tab 4)")
-
-        # --- Time -------------------------------------------------------------
-        if time_gate in GATE_ACTIVE:
-            if time_orig is None: conditional_missing.append("• **Time original format** (Tab 4)")
-            if time_conv is None: conditional_missing.append("• **Time conversion method** (Tab 4)")
-
-        # --- Error ------------------------------------------------------------
-        if err_gate in GATE_ACTIVE:
-            if err_measure is None: conditional_missing.append("• **Error measure as reported** (Tab 4)")
-            # Sanity check: events cannot exceed the denominator. Catches a percentage
-            # typed into the Events box (e.g. 12.5% of 16 entered as "12").
-            if err_events is not None and err_n is not None and err_events > err_n:
-                conditional_missing.append(
-                    f"• **Error events ({int(err_events)}) exceed N analyzed ({int(err_n)})** — "
-                    "did you enter a percentage instead of a count? (Tab 4)")
-
-        # --- NTS: gate required, no sub-fields forced -------------------------
-
-        # --- Fidelity-rate gate (v5.1) ---------------------------------------
-        if (fidelity_check == "Yes — quantitative (e.g., observed/timed use)"
-                and not fidelity_rate.strip()):
-            conditional_missing.append(
-                "• **CA use fidelity rate (%)** — required because fidelity check = "
-                "'Yes — quantitative' (Tab 3)")
-
-        # --- MERSQI partial-entry guard --------------------------------------
-        _n_mersqi = sum(1 for s in _mersqi_subscores if s is not None)
-        if 0 < _n_mersqi < 6:
-            conditional_missing.append("• **MERSQI** — complete all 6 domains or leave all blank (Tab 5)")
-
-        if missing_text or missing_select or conditional_missing:
-            err_lines = ["❌ **Cannot submit — required fields missing:**"]
-            if missing_text: err_lines += [f"• **{x}**" for x in missing_text]
-            err_lines += missing_select + conditional_missing
-            st.error("\n\n".join(err_lines))
+        if not reviewer: missing_text.append('Reviewer (Tab 1)')
+        if study_id is None: missing_text.append('Study ID (Tab 1)')
+        if phase is None: missing_text.append('Phase (Tab 1)')
+        if not author.strip(): missing_text.append('Lead Author (Tab 1)')
+        if year is None: missing_text.append('Year (Tab 1)')
+        if arm_n is None and not coding_uncertainty_log.strip(): missing_text.append('N (this arm), or a missing/conflicting-N explanation in the log')
+        if not arm_label.strip(): missing_text.append('Arm Label (Tab 2)')
+        if not node_rationale.strip(): missing_text.append('Node rationale (Tab 2)')
+        CRITICAL_FIELDS = [('Study type', study_type, 'Tab 1'), ('Setting', setting, 'Tab 1'), ('Simulation fidelity', sim_fidelity, 'Tab 1'), ('Scenario complexity', scen_complexity, 'Tab 1'), ('Publication type', pub_type, 'Tab 1'), ('Unit of randomisation', unit_random, 'Tab 1'), ('Unit of analysis', unit_analysis, 'Tab 1'), ('Provider experience level', exp_level, 'Tab 1'), ('Team interprofessionality', team_inter, 'Tab 1'), ('NMA Node', nma_node, 'Tab 2'), ('CA medium', medium, 'Tab 2'), ('CA type', ca_type, 'Tab 2'), ('CA logic structure', ca_logic, 'Tab 2'), ('Pre-training intensity', pretrain_intensity, 'Tab 3'), ('Training method', train_method, 'Tab 3'), ('Training timing', train_timing, 'Tab 3'), ('Reader present', reader_present, 'Tab 3'), ('Interaction style', interaction, 'Tab 3'), ('Strictness', strictness, 'Tab 3'), ('Enforcement', enforcement, 'Tab 3'), ('Fidelity check', fidelity_check, 'Tab 3'), ('Adherence reported?', adh_gate, 'Tab 4'), ('Time reported?', time_gate, 'Tab 4'), ('Error reported?', err_gate, 'Tab 4'), ('NTS reported?', nts_gate, 'Tab 4'), ('Sim patient outcome reported?', simpt_gate, 'Tab 4')]
+        errors = missing_text + [name+' ('+tab+')' for name,value,tab in CRITICAL_FIELDS if value is None]
+        errors += validate_domains(gates,outcome_records)
+        if context_changed:
+            errors.append('Outcome identity changed: restore it or start a new arm/study.')
+        unclear_fields = [name for name,value,tab in CRITICAL_FIELDS if isinstance(value,str) and 'unclear' in value.lower()]
+        if reader_mode == 'Unclear': unclear_fields.append('Reader use mode')
+        if unclear_fields and not coding_uncertainty_log.strip():
+            errors.append('Explain Unclear selections in the log: '+', '.join(unclear_fields))
+        if fidelity_check == 'Yes — quantitative (e.g., observed/timed use)' and not fidelity_rate.strip():
+            errors.append('Enter the quantitative fidelity value with its unit, or explain its absence in the implementation narrative.' if not implementation_narrative.strip() else '')
+        errors = [e for e in errors if e]
+        if fidelity_rate.strip() and fidelity_check not in ['Yes — quantitative (e.g., observed/timed use)','Yes — ordinal scale (e.g., 0–5 rating)']:
+            errors.append('A fidelity value remains under a non-quantitative status. Clear it or correct the status.')
+        if simpt_gate in GATE_ACTIVE and not simpt_desc.strip(): errors.append('Describe the simulated patient result and its source.')
+        if simpt_gate not in GATE_ACTIVE and simpt_desc.strip(): errors.append('A simulated patient result remains under an inactive status. Clear it or correct the status.')
+        if 0 < _n_mersqi < len(_mersqi_items): errors.append('Complete all MERSQI components or leave all blank.')
+        if _n_mersqi == len(_mersqi_items) and not mersqi_rationale.strip(): errors.append('MERSQI: identify the assessed instrument and give brief reasons in comments.')
+        ratings = [d1,d2,d3,d4,d5,rob_overall]
+        if any(v is not None for v in ratings):
+            if not all(v is not None for v in ratings): errors.append('Complete RoB domains and overall rating, or leave all blank.')
+            if not rob_comments.strip(): errors.append('RoB comments must identify the result/analysis/version and reasons.')
+        if errors:
+            st.error('Please resolve:\n\n'+'\n\n'.join('• '+e for e in errors))
+            st.stop()
+        arm_record = {
+            'Timestamp': datetime.now(TZ).strftime('%Y-%m-%d %H:%M:%S %Z'),
+            'Reviewer': reviewer,
+            'Study ID (Covidence)': '' if study_id is None else str(int(study_id)),
+            'Phase': phase,
+            'Lead Author': author,
+            'Year': _s(year),
+            'Study Type': study_type,
+            'Country': country,
+            'Setting': setting,
+            'Scenario': scenario,
+            'Simulation Fidelity': sim_fidelity,
+            'Scenario Complexity': scen_complexity,
+            'Total N (all arms)': _s(total_n),
+            'N (this arm)': _s(arm_n),
+            'Unit of randomisation': unit_random,
+            'Unit of analysis': unit_analysis,
+            'Team composition (free text)': team_compo,
+            'Team interprofessionality': team_inter,
+            'Provider experience': exp_level,
+            'NMA Node': nma_node,
+            'Node rationale': node_rationale,
+            'Arm No.': str(arm_no),
+            'Arm Label': arm_label,
+            'CA Name': aid_name,
+            'Format - medium': medium,
+            'Format - type': ca_type,
+            'CA logic structure': ca_logic,
+            'Pre-training intensity': pretrain_intensity,
+            'Pre-training description': pretrain_desc,
+            'Training duration': train_duration,
+            'Training method': train_method,
+            'Training timing': train_timing,
+            'Designated Reader present': reader_present,
+            'Reader use mode': reader_mode,
+            'Interaction style': interaction,
+            'Strictness of workflow': strictness,
+            'CA use enforcement': enforcement,
+            'CA use fidelity check': fidelity_check,
+            'CA use fidelity rate (%)': fidelity_rate,
+            'Implementation narrative': implementation_narrative,
+            'Adherence reported?': _s(adh_gate),
+            'Adherence measure tier': '',
+            'Adherence instrument': '',
+            'Adherence scale max': '',
+            'Adherence Mean': '',
+            'Adherence SD': '',
+            'Adherence N analyzed': '',
+            'Adherence original format': '',
+            'Adherence raw median stats': '',
+            'Adherence conversion method': '',
+            'Adherence Kirkpatrick level': '',
+            'Adherence comments': '',
+            'Time reported?': _s(time_gate),
+            'Time Mean': '',
+            'Time SD': '',
+            'Time N analyzed': '',
+            'Time original format': '',
+            'Time raw median stats': '',
+            'Time conversion method': '',
+            'Time comments': '',
+            'Error reported?': _s(err_gate),
+            'Error events': '',
+            'Error N analyzed': '',
+            'Error measure as reported': '',
+            'Error original reporting': '',
+            'Error comments': '',
+            'NTS reported?': _s(nts_gate),
+            'NTS Mean': '',
+            'NTS SD': '',
+            'NTS N analyzed': '',
+            'NTS instrument': '',
+            'NTS comments': '',
+            'Sim patient outcome reported?': _s(simpt_gate),
+            'Sim patient outcome description': simpt_desc,
+            'RoB-2 D1 Randomization': _s(d1),
+            'RoB-2 D2 Deviation': _s(d2),
+            'RoB-2 D3 Missing data': _s(d3),
+            'RoB-2 D4 Measurement': _s(d4),
+            'RoB-2 D5 Selective reporting': _s(d5),
+            'RoB-2 Overall': _s(rob_overall),
+            'RoB-2 Comments': rob_comments,
+            'MERSQI total (max 18)': mersqi_total,
+            'MERSQI Comments': mersqi_comments,
+            'Publication type': pub_type,
+            'Author contact status': _s(author_contact),
+            'Adherence outcome direction': '',
+            'Coding uncertainty log': coding_uncertainty_log,
+        }
+        # Stable retry identifiers: do not generate a second submission after an ambiguous response.
+        st.session_state.setdefault('_submission_id',uuid.uuid4().hex)
+        st.session_state.setdefault('_draft_timestamp',datetime.now(TZ).isoformat(timespec='microseconds'))
+        arm_record['Timestamp'] = st.session_state['_draft_timestamp']
+        submission_id = st.session_state['_submission_id']
+        try:
+            outcomes_ws = book.worksheet(OUTCOMES_TAB)
+        except gspread.WorksheetNotFound:
+            st.error('First open One-time setup and click Create / check Outcomes tab. Your draft remains on screen.')
+            st.stop()
+        payload = {'arm':arm_record,'outcomes':outcome_records,'submission_id':submission_id}
+        payload_digest = hashlib.sha256(json.dumps(payload,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+        if st.session_state.get('_attempt_digest') not in (None,payload_digest):
+            st.error('A prior save attempt had an uncertain result and this draft changed. Restore that draft or inspect the sheet before starting a new entry. The original attempted data are available below.')
         else:
-            row_data = [
-                datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %Z"), reviewer,
-                ("" if study_id is None else str(int(study_id))), phase,
-                author, _s(year), study_type, country, setting, scenario,
-                sim_fidelity, scen_complexity,
-                _s(total_n), _s(arm_n), unit_random, unit_analysis, team_compo,
-                team_inter, exp_level,
-                nma_node, node_rationale, str(arm_no), arm_label, aid_name,
-                medium, ca_type, ca_logic,
-                pretrain_intensity, pretrain_desc,
-                train_duration, train_method, train_timing,
-                reader_present, reader_mode,
-                interaction, strictness,
-                enforcement, fidelity_check, fidelity_rate,
-                implementation_narrative,
-                _s(adh_gate),
-                _s(adh_tier), adh_instrument, _s(adh_scalemax),
-                _s(adh_mean), _s(adh_sd), _s(adh_n),
-                _s(adh_orig), adh_raw, _s(adh_conv), _s(adh_kp), adh_comments,
-                _s(time_gate),
-                _s(time_mean), _s(time_sd), _s(time_n),
-                _s(time_orig), time_raw, _s(time_conv), time_comments,
-                _s(err_gate),
-                _s(err_events), _s(err_n), _s(err_measure), err_orig, err_comments,
-                _s(nts_gate),
-                _s(nts_mean), _s(nts_sd), _s(nts_n), nts_instrument, nts_comments,
-                _s(simpt_gate), simpt_desc,
-                _s(d1), _s(d2), _s(d3), _s(d4), _s(d5), _s(rob_overall), rob_comments,
-                mersqi_total, mersqi_comments,
-                pub_type, _s(author_contact), _s(adh_direction),
-                coding_uncertainty_log,
-            ]
+            st.session_state['_attempt_digest'] = payload_digest
+            st.session_state['_attempt_payload'] = payload
+            try:
+                result = save_submission(book,worksheet,outcomes_ws,arm_record,outcome_records,submission_id)
+                st.session_state['_saved'] = True
+                st.success(f'Saved {author} ({year}), arm {arm_no}: 1 arm row + {len(outcome_records)} result rows.' if result=='saved' else 'This submission was already saved; no duplicate was added.')
+            except Exception as exc:
+                st.error('Save not confirmed: '+str(exc)+'. Keep this page open. Retry the unchanged draft; duplicate-key checks run before saving.')
+    if st.session_state.get('_attempt_payload'):
+        st.download_button('Download submitted/attempted data (JSON)',
+            json.dumps(st.session_state['_attempt_payload'],ensure_ascii=False,indent=2),
+            file_name='nma_submission.json',mime='application/json',key='download_attempt')
 
-            if len(row_data) != len(SHEET_HEADERS):
-                st.error(f"⚠️ Internal column-count mismatch: row has {len(row_data)} fields, SHEET_HEADERS has {len(SHEET_HEADERS)}.")
-            else:
-                try:
-                    worksheet.append_row(row_data)
-                    st.success(f"✅ Saved: **{author} ({year}) — Arm {arm_no}: {arm_label}** by {reviewer}")
-                    st.balloons()
-                    st.warning(
-                        "**⚠️ Before clicking Submit again:**\n"
-                        "- **NEXT ARM**: update Arm No., Arm Label, Node, Node rationale, "
-                        "**N (this arm)** and all Outcomes. Also re-check the arm-specific "
-                        "implementation fields (reader, training, enforcement) — they are "
-                        "still showing the previous arm's values. "
-                        "(RoB-2/MERSQI already recorded for this study — leave blank.)\n"
-                        "- **NEW study**: refresh browser (F5) to clear.")
-                except Exception as e:
-                    st.error(f"❌ Could not write to sheet: {e}")
+
+if __name__ == '__main__':
+    main()
