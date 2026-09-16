@@ -444,11 +444,11 @@ def main():
     st.set_page_config(page_title='Cognitive Aids NMA Extraction v6.0',layout='wide')
     st.title('Cognitive Aids NMA — Data Extraction (v6.0)')
     st.info('One arm per submission. In Tab 4, use ＋ Add result for additional selected outcomes or scenarios. '
-            'Keep statistics as reported. Use the same arm numbering as your co-reviewer. Nothing is saved until Submit.')
-    controls = st.columns(2)
-    with controls[0]: st.button('Start next arm — clear arm/outcome fields',on_click=clear_draft,args=(False,))
-    with controls[1]: st.button('Start new study — clear draft',on_click=clear_draft,args=(True,))
-    st.caption('These buttons clear the current draft immediately. Next arm keeps study fields and clears arm-specific and quality fields. Browser refresh also discards unsaved input.')
+            'Keep statistics as reported. Use the same arm numbering as your co-reviewer. Nothing is saved until Submit. '
+            '**Refresh the browser to start a new study.**')
+    st.button('Start next arm — clear arm/outcome fields',on_click=clear_draft,args=(False,))
+    st.caption('Clears arm-specific and outcome fields and advances Arm No.; study-level fields stay. '
+               '**For a NEW STUDY, refresh the browser (F5 / Cmd+R)** — that clears everything.')
     try:
         book = open_book()
         main_title = st.secrets.get('arms_sheet_name','')
@@ -862,7 +862,7 @@ def main():
         st.session_state['_outcome_context'] = identity
     context_changed = '_outcome_context' in st.session_state and st.session_state['_outcome_context'] != identity
     if context_changed:
-        st.warning('Study/reviewer/phase/arm changed while outcome data remain. Restore the original identity or use Start next arm / Start new study.')
+        st.warning('Study/reviewer/phase/arm changed while outcome data remain. Restore the original identity, use Start next arm, or refresh the browser to start a new study.')
     with tab5:
         st.info("ℹ️ **RoB-2 and MERSQI are entered ONCE per study** (normally on Arm 1). "
                 "On later arms leave these blank unless assessing a different RoB result — they are optional "
@@ -1013,7 +1013,7 @@ def main():
     st.caption(f'{len(outcome_records)} result row(s) will be linked to this arm. Results are saved in Outcomes; legacy result cells in the 87-column tab stay empty for new submissions.')
     submitted = st.button('💾 Submit Arm Data',key='submit_arm',disabled=bool(st.session_state.get('_saved')))
     if st.session_state.get('_saved'):
-        st.success('Saved. Use Start next arm or Start new study for another submission.')
+        st.success('Saved. Use Start next arm for the next arm of this study, or refresh the browser to start a new study.')
     if submitted:
         missing_text = []
         if not reviewer: missing_text.append('Reviewer (Tab 1)')
