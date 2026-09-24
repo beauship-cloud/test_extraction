@@ -1,4 +1,4 @@
-"""Cognitive Aids NMA extraction v6.0.
+"""Cognitive Aids NMA extraction v6.1.
 Built from the user's v5.4. Existing 87 headers are unchanged.
 Run: streamlit run app.py. No Google write occurs until a setup/save button is clicked.
 """
@@ -12,11 +12,13 @@ import gspread
 import streamlit as st
 from google.oauth2.service_account import Credentials
 
-VERSION = "6.0"
+VERSION = "6.1"
 TZ = ZoneInfo("America/Toronto")
 SHEET_URL = "https://docs.google.com/spreadsheets/d/12HHfPH04LEsg9UTuMlm-w20X6UniAQDEFA2C2WmrKEA/edit"
 OUTCOMES_TAB = "Outcomes"
-GATE_OPTS = ["Reported", "Partially reported", "Not reported (paper silent)",
+GATE_NOT_SELECTED = "Reported — not selected for extraction"
+NODE_PENDING = "Pending adjudication"
+GATE_OPTS = ["Reported", "Partially reported", GATE_NOT_SELECTED, "Not reported (paper silent)",
              "Explicitly not measured", "Measured – not extractable", "Unclear"]
 GATE_ACTIVE = ("Reported", "Partially reported")
 REVIEWERS = ["Angélique", "Rohit Bompalli", "YeonJung", "Shayan"]
@@ -234,8 +236,66 @@ def validate_result(r):
     return errors
 
 
-def validate_domains(gates, records):
+def validate_not_selected(gates, reasons):
+    return [f"{domain}: explain why no result was selected for extraction (Tab 4)."
+            for domain, gate in gates.items()
+            if gate == GATE_NOT_SELECTED and not str(reasons.get(domain) or '').strip()]
+
+
+def decision_log_text(original, gates, reasons, node, node_rationale):
+    """Save decision reasons in the existing log column; no extra sheet columns."""
+    lines = [original.strip()] if original.strip() else []
+    for domain, gate in gates.items():
+        if gate == GATE_NOT_SELECTED:
+            reason = ' '.join(str(reasons.get(domain) or '').split())
+            if reason:
+                line = f'NOT SELECTED — {domain}: {reason}'
+                if line not in original.splitlines():
+                    lines.append(line)
+    if node == NODE_PENDING and node_rationale.strip():
+        line = 'PENDING ADJUDICATION — NMA Node: ' + ' '.join(node_rationale.split())
+        if line not in original.splitlines():
+            lines.append(line)
+    return '\n'.join(lines)
+
+
+def summarize_mersqi(items):
+    """None means unchecked, whereas a selected score of 0 is an assessed score."""
+    count = sum(value is not None for _, value in items)
+    if count == 0:
+        return '', ''
+    total = round(sum(value[0] for _, value in items), 1) if count == len(items) else ''
+    status = 'Complete' if count == len(items) else 'Partial'
+    details = ' | '.join(
+        f'{label}={value[0]} ({value[1]})' if value is not None
+        else f'{label}=Not assessed (pending)'
+        for label, value in items)
+    return total, f'{status} {count}/{len(items)} | {details}'
+
+
+def result_advisories(record):
+    """Source checks are informational and never alter the entered values."""
+    warnings = []
+    for field in ('SD', 'SE'):
+        if record.get(field) == 0:
+            warnings.append(
+                f'{field} is 0. Check that the source actually reports zero. '
+                'If it is not reported, leave it blank and record the missing statistic in Comments. '
+                'A genuine reported zero can be submitted; this warning does not block saving.')
+    proportion_text = ''
+    events, n = record.get('Events'), record.get('N analyzed')
+    if (record.get('Original reporting format') == 'events / N'
+            and isinstance(events, (int, float)) and not isinstance(events, bool)
+            and isinstance(n, (int, float)) and not isinstance(n, bool)
+            and math.isfinite(events) and math.isfinite(n) and events >= 0 and n > 0):
+        proportion_text = (f'Entered count: {events:g} / {n:g} = {100 * events / n:.2f}%. '
+                           'Compare with the paper. This display does not verify the source or change your entries.')
+    return warnings, proportion_text
+
+
+def validate_domains(gates, records, not_selected_reasons=None):
     errors = []
+    errors += validate_not_selected(gates, not_selected_reasons or {})
     for domain, gate in gates.items():
         selected = [r for r in records if r["Domain"] == domain]
         if gate is None:
@@ -429,6 +489,11 @@ def render_result(domain, rid, ordinal):
             r['N analyzed'] = st.number_input('N analyzed',value=None,min_value=1,step=1,key=prefix+'N analyzed')
         with c2: pick('N unit',['Individuals','Teams','Simulations / team-events','Action opportunities','Other / unclear'])
         with c3: txt('Measurement unit',help='E.g. %, proportion 0–1, score points, seconds, min.seconds. Keep source units.')
+        warnings, proportion_text = result_advisories(r)
+        for warning in warnings:
+            st.warning(warning)
+        if proportion_text:
+            st.caption(proportion_text)
         txt('Estimate type / comparison',help='For effects: measure, comparator and scale, e.g. adjusted OR vs no aid. For model means: model name.')
         r['Raw reported statistics'] = st.text_area('Raw reported statistics (optional unless figure/other)',key=prefix+'Raw reported statistics',
             help='Preserve exact notation, extra statistics, or text-only findings here. No invented numbers.')
@@ -441,8 +506,8 @@ def render_result(domain, rid, ordinal):
 
 
 def main():
-    st.set_page_config(page_title='Cognitive Aids NMA Extraction v6.0',layout='wide')
-    st.title('Cognitive Aids NMA — Data Extraction (v6.0)')
+    st.set_page_config(page_title=f'Cognitive Aids NMA Extraction v{VERSION}',layout='wide')
+    st.title(f'Cognitive Aids NMA — Data Extraction (v{VERSION})')
     st.info('One arm per submission. In Tab 4, use ＋ Add result for additional selected outcomes or scenarios. '
             'Keep statistics as reported. Use the same arm numbering as your co-reviewer. Nothing is saved until Submit. '
             '**Refresh the browser to start a new study.**')
@@ -681,7 +746,7 @@ def main():
         st.subheader("NMA Node — classify by FUNCTION, not medium")
         n1, n2 = st.columns([1, 2])
         with n1:
-            nma_node = st.selectbox("★ NMA Node", ["Control", "Static", "Dynamic"],
+            nma_node = st.selectbox("★ NMA Node", ["Control", "Static", "Dynamic", NODE_PENDING],
                 help="The test is whether the tool RESPONDS to what the user does.\n\n"
                      "• **Control**: no eligible cognitive aid provided.\n"
                      "• **Static**: fixed content the user reads or navigates — paper, "
@@ -691,19 +756,21 @@ def main():
                      "task progress.\n\n"
                      "Two things that do NOT decide the node: what the paper calls the "
                      "arm, and who physically operates the aid.\n\n"
-                     "If you genuinely cannot tell, pick the closest node, start the "
-                     "rationale with 'NODE UNCERTAIN' and explain in the uncertainty log.",
+                     "If classification is unresolved, select Pending adjudication and "
+                     "explain the uncertainty and source in Node rationale. Resolve it before assigning an analysis node.",
                 key="nma_node", index=None, placeholder="— select —")
             arm_no = st.number_input("★ Arm No.", min_value=1, value=1, step=1, key="arm_no",
                 help="Use a unique number within this study (1, 2, 3...). Both reviewers must use the same Arm Label-to-number mapping; default to paper order. This is not the NMA node code.")
         with n2:
-            node_rationale = st.text_area("★ Node rationale (1 line + source)", height=68,
+            node_rationale = st.text_area("★ Node rationale / reason for pending (1 line + source)", height=68,
                 key="node_rationale",
                 placeholder="e.g. Tool asks patient type, then pulse y/n; next screen "
                             "depends on answer — Supplement Fig S2")
         st.caption("**Node rationale is required.** Give the reason AND where you read it "
                    "(page / table / figure). 'dynamic aid' just repeats the verdict and "
                    "the second reviewer cannot check it.")
+        if nma_node == NODE_PENDING:
+            st.info('Explain why the node is unresolved in Node rationale. The reason is also saved in the Coding uncertainty log. No Control/Static/Dynamic value is inferred.')
 
         st.markdown("---")
         st.subheader("Cognitive Aid Description")
@@ -833,12 +900,18 @@ def main():
                    'Only extract prespecified items; do not treat a total and its components as independent contributions.')
         outcome_records = []
         gates = {}
+        not_selected_reasons = {}
         for domain, gate_key in DOMAINS.items():
             st.subheader({'Adherence':'Outcome 1 — Adherence / task completion',
                           'Time':'Outcome 2 — Time', 'Error':'Outcome 3 — Error',
                           'NTS':'Outcome 4 — Teamwork / NTS'}[domain])
             gates[domain] = st.selectbox(f'★ {domain} reported?',GATE_OPTS,index=None,placeholder='— select —',key=gate_key,
-                help='Reported: results available. Partially reported: some statistics absent. Use the other states for silence, explicitly not measured, measured but not extractable, or uncertainty.')
+                help='Reported: at least one selected result. Partially reported: selected results have missing statistics. Reported — not selected: no result in this domain is selected; explain why. If you keep a primary score but omit an alternative, keep Reported.')
+            if gates[domain] == GATE_NOT_SELECTED:
+                not_selected_reasons[domain] = st.text_area(
+                    f'★ {domain}: reason for not selecting any result',
+                    key='not_selected_reason_'+domain,
+                    help='Give the reason and source. Automatically saved as NOT SELECTED — '+domain+': ... in Coding uncertainty log. No need to enter it twice.')
             ids = st.session_state.setdefault('_ids_'+domain,[])
             if gates[domain] in GATE_ACTIVE:
                 if not ids:
@@ -851,6 +924,11 @@ def main():
         adh_gate, time_gate, err_gate, nts_gate = [gates[d] for d in DOMAINS]
         st.subheader('Outcome 5 — Simulated patient outcome (descriptive only)')
         simpt_gate = st.selectbox('★ Simulated patient outcome reported?',GATE_OPTS,index=None,placeholder='— select —',key='simpt_gate')
+        if simpt_gate == GATE_NOT_SELECTED:
+            not_selected_reasons['Simulated patient outcome'] = st.text_area(
+                '★ Simulated patient outcome: reason for not selecting any result',
+                key='not_selected_reason_Simulated patient outcome',
+                help='Give the reason and source. Automatically saved in Coding uncertainty log.')
         simpt_desc = st.text_area('Simulated patient outcome description',key='simpt_desc',
             help='Record observed numbers and denominators, source and whether script-determined. A scripted ROSC or preset stop time alone is not an observed outcome.')
 
@@ -886,7 +964,7 @@ def main():
 
         st.markdown("---")
         st.subheader("MERSQI (medical education research quality)")
-        st.caption("Scores are calculated and saved automatically. Use comments for the assessed instrument, completion numerator/denominator and brief reasons.")
+        st.caption("Selected scores are saved automatically. Leave unassessed items unselected; a selected 0 means assessed but not reported/inappropriate, not pending. Partial assessments can be submitted with a blank total. Use comments for the instrument, completion denominator, reasons and what remains to check.")
         mq1, mq2 = st.columns(2)
         with mq1:
             mersqi_design = st.selectbox("1. Study design",
@@ -968,18 +1046,11 @@ def main():
         _mersqi_subscores = [v for _, v in _mersqi_items]
         _n_mersqi = sum(1 for v in _mersqi_subscores if v is not None)
 
-        if _n_mersqi == 0:
-            mersqi_total = ""
-            _mersqi_detail = ""
-        elif _n_mersqi < len(_mersqi_items):
-            mersqi_total = ""
-            _mersqi_detail = ""
-            st.warning(f"⚠️ MERSQI partial: {_n_mersqi}/{len(_mersqi_items)} items selected. "
-                       "Complete all of them (study-level) or leave all blank on duplicate arms.")
-        else:
-            _tot = sum(v[0] for v in _mersqi_subscores)
-            mersqi_total = round(_tot, 1)
-            _mersqi_detail = " | ".join(f"{lab}={v[0]} ({v[1]})" for lab, v in _mersqi_items)
+        mersqi_total, _mersqi_detail = summarize_mersqi(_mersqi_items)
+        if 0 < _n_mersqi < len(_mersqi_items):
+            st.info(f'MERSQI partial: {_n_mersqi}/{len(_mersqi_items)} items assessed. '
+                    'You may submit: selected scores and pending items will be saved in MERSQI Comments; total stays blank.')
+        elif _n_mersqi == len(_mersqi_items):
             _dom = {
                 "1 Design": mersqi_design[0],
                 "2 Sampling": mersqi_inst[0] + mersqi_resp[0],
@@ -1024,9 +1095,12 @@ def main():
         if arm_n is None and not coding_uncertainty_log.strip(): missing_text.append('N (this arm), or a missing/conflicting-N explanation in the log')
         if not arm_label.strip(): missing_text.append('Arm Label (Tab 2)')
         if not node_rationale.strip(): missing_text.append('Node rationale (Tab 2)')
+        if nma_node == NODE_PENDING and not node_rationale.strip():
+            missing_text.append('Reason for Pending adjudication (Node rationale, Tab 2)')
         CRITICAL_FIELDS = [('Study type', study_type, 'Tab 1'), ('Setting', setting, 'Tab 1'), ('Simulation fidelity', sim_fidelity, 'Tab 1'), ('Scenario complexity', scen_complexity, 'Tab 1'), ('Publication type', pub_type, 'Tab 1'), ('Unit of randomisation', unit_random, 'Tab 1'), ('Unit of analysis', unit_analysis, 'Tab 1'), ('Provider experience level', exp_level, 'Tab 1'), ('Team interprofessionality', team_inter, 'Tab 1'), ('NMA Node', nma_node, 'Tab 2'), ('CA medium', medium, 'Tab 2'), ('CA type', ca_type, 'Tab 2'), ('CA logic structure', ca_logic, 'Tab 2'), ('Pre-training intensity', pretrain_intensity, 'Tab 3'), ('Training method', train_method, 'Tab 3'), ('Training timing', train_timing, 'Tab 3'), ('Reader present', reader_present, 'Tab 3'), ('Interaction style', interaction, 'Tab 3'), ('Strictness', strictness, 'Tab 3'), ('Enforcement', enforcement, 'Tab 3'), ('Fidelity check', fidelity_check, 'Tab 3'), ('Adherence reported?', adh_gate, 'Tab 4'), ('Time reported?', time_gate, 'Tab 4'), ('Error reported?', err_gate, 'Tab 4'), ('NTS reported?', nts_gate, 'Tab 4'), ('Sim patient outcome reported?', simpt_gate, 'Tab 4')]
         errors = missing_text + [name+' ('+tab+')' for name,value,tab in CRITICAL_FIELDS if value is None]
-        errors += validate_domains(gates,outcome_records)
+        errors += validate_domains(gates,outcome_records,not_selected_reasons)
+        errors += validate_not_selected({'Simulated patient outcome':simpt_gate},not_selected_reasons)
         if context_changed:
             errors.append('Outcome identity changed: restore it or start a new arm/study.')
         unclear_fields = [name for name,value,tab in CRITICAL_FIELDS if isinstance(value,str) and 'unclear' in value.lower()]
@@ -1040,8 +1114,7 @@ def main():
             errors.append('A fidelity value remains under a non-quantitative status. Clear it or correct the status.')
         if simpt_gate in GATE_ACTIVE and not simpt_desc.strip(): errors.append('Describe the simulated patient result and its source.')
         if simpt_gate not in GATE_ACTIVE and simpt_desc.strip(): errors.append('A simulated patient result remains under an inactive status. Clear it or correct the status.')
-        if 0 < _n_mersqi < len(_mersqi_items): errors.append('Complete all MERSQI components or leave all blank.')
-        if _n_mersqi == len(_mersqi_items) and not mersqi_rationale.strip(): errors.append('MERSQI: identify the assessed instrument and give brief reasons in comments.')
+        if _n_mersqi and not mersqi_rationale.strip(): errors.append('MERSQI: identify the assessed instrument, give brief reasons, and note pending items if incomplete.')
         ratings = [d1,d2,d3,d4,d5,rob_overall]
         if any(v is not None for v in ratings):
             if not all(v is not None for v in ratings): errors.append('Complete RoB domains and overall rating, or leave all blank.')
@@ -1136,7 +1209,9 @@ def main():
             'Publication type': pub_type,
             'Author contact status': _s(author_contact),
             'Adherence outcome direction': '',
-            'Coding uncertainty log': coding_uncertainty_log,
+            'Coding uncertainty log': decision_log_text(
+                coding_uncertainty_log, {**gates, 'Simulated patient outcome':simpt_gate},
+                not_selected_reasons, nma_node, node_rationale),
         }
         # Stable retry identifiers: do not generate a second submission after an ambiguous response.
         st.session_state.setdefault('_submission_id',uuid.uuid4().hex)
