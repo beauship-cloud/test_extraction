@@ -1,6 +1,8 @@
-"""Cognitive Aids NMA extraction v6.1.
+"""Cognitive Aids NMA extraction v6.2.
 Built from the user's v5.4. Existing 87 headers are unchanged.
-Run: streamlit run app.py. No Google write occurs until a setup/save button is clicked.
+Run: streamlit run app.py. No Google write occurs until a setup/save/draft button is clicked.
+v6.2: adds Save draft / resume (sidebar). Drafts live in their own "Drafts" tab and never
+touch the 87-column tab or Outcomes.
 """
 import hashlib
 import json
@@ -12,10 +14,19 @@ import gspread
 import streamlit as st
 from google.oauth2.service_account import Credentials
 
-VERSION = "6.1"
+VERSION = "6.2"
 TZ = ZoneInfo("America/Toronto")
 SHEET_URL = "https://docs.google.com/spreadsheets/d/12HHfPH04LEsg9UTuMlm-w20X6UniAQDEFA2C2WmrKEA/edit"
 OUTCOMES_TAB = "Outcomes"
+DRAFTS_TAB = "Drafts"
+DRAFT_CHUNK = 45000          # Google Sheets cell limit is 50,000 characters
+DRAFT_JSON_COLS = ["Draft JSON 1", "Draft JSON 2", "Draft JSON 3", "Draft JSON 4"]
+DRAFT_HEADERS = ["Saved at", "Reviewer", "Study ID (Covidence)", "Phase", "Arm No.",
+                 "Form version", "Lead Author", *DRAFT_JSON_COLS]
+# Buttons and draft controls are not form content and cannot be restored.
+DRAFT_SKIP_KEYS = {"submit_arm", "setup_outcomes", "download_attempt", "save_draft",
+                   "find_drafts", "draft_pick", "load_draft_btn"}
+DRAFT_SKIP_PREFIXES = ("del_", "add_")
 GATE_NOT_SELECTED = "Reported — not selected for extraction"
 NODE_PENDING = "Pending adjudication"
 GATE_OPTS = ["Reported", "Partially reported", GATE_NOT_SELECTED, "Not reported (paper silent)",
@@ -398,6 +409,156 @@ def save_submission(book, arms, outcomes, arm_record, records, submission_id):
     return "saved"
 
 
+# ---------------------------------------------------------------------------
+# Drafts: save an unfinished entry before Submit, resume it later.
+# ---------------------------------------------------------------------------
+def snapshot_state(state):
+    """Form content only: widget values plus the result-card ID lists."""
+    snap = {}
+    for key, value in state.items():
+        if not isinstance(key, str) or key in DRAFT_SKIP_KEYS or key.startswith(DRAFT_SKIP_PREFIXES):
+            continue
+        if key.startswith('_') and not key.startswith('_ids_'):
+            continue
+        snap[key] = value
+    return snap
+
+
+def restore_value(key, value):
+    # JSON turns the MERSQI (score, label) tuples into lists; selectboxes need tuples back.
+    if isinstance(value, list) and not key.startswith('_ids_'):
+        return tuple(value)
+    return value
+
+
+def ensure_drafts(book):
+    try:
+        ws = book.worksheet(DRAFTS_TAB)
+        check_headers(ws, DRAFT_HEADERS)
+        return ws
+    except gspread.WorksheetNotFound:
+        ws = book.add_worksheet(title=DRAFTS_TAB, rows=200, cols=len(DRAFT_HEADERS))
+        ws.update(values=[DRAFT_HEADERS], range_name='A1', value_input_option='RAW')
+        return ws
+
+
+def draft_row_index(ws, key):
+    """1-based sheet row of the draft with this Study/Phase/Reviewer/Arm key, or None."""
+    for i, row in enumerate(ws.get_all_values()[1:], start=2):
+        if canonical_key(dict(zip(DRAFT_HEADERS, row))) == key:
+            return i
+    return None
+
+
+def save_draft(book, snap):
+    """Upsert one draft per Study ID / Phase / Reviewer / Arm No. No validation is run."""
+    reviewer, study_id = snap.get('reviewer'), snap.get('study_id')
+    if not reviewer or study_id is None:
+        raise ValueError('Select Reviewer and enter Study ID (Tab 1) before saving a draft.')
+    text = json.dumps({'version': VERSION, 'state': snap}, ensure_ascii=False)
+    chunks = [text[i:i + DRAFT_CHUNK] for i in range(0, len(text), DRAFT_CHUNK)]
+    if len(chunks) > len(DRAFT_JSON_COLS):
+        raise ValueError('Draft is too large to store. Submit this arm, or shorten the free-text fields.')
+    chunks += [''] * (len(DRAFT_JSON_COLS) - len(chunks))
+    row = [datetime.now(TZ).strftime('%Y-%m-%d %H:%M:%S %Z'), reviewer, str(int(study_id)),
+           snap.get('phase') or '', str(snap.get('arm_no', 1)), VERSION,
+           snap.get('author') or '', *chunks]
+    ws = ensure_drafts(book)
+    index = draft_row_index(ws, canonical_key(dict(zip(DRAFT_HEADERS, row))))
+    # RAW: text is stored literally, so nothing is interpreted as a formula.
+    if index:
+        ws.update(values=[row], range_name=f'A{index}', value_input_option='RAW')
+        return 'updated'
+    ws.append_row(row, value_input_option='RAW', table_range='A1')
+    return 'created'
+
+
+def list_drafts(book, reviewer):
+    try:
+        ws = book.worksheet(DRAFTS_TAB)
+    except gspread.WorksheetNotFound:
+        return {}
+    drafts = {}
+    for row in ws.get_all_values()[1:]:
+        d = dict(zip(DRAFT_HEADERS, row))
+        if str(d.get('Reviewer', '')).strip() != str(reviewer).strip():
+            continue
+        label = (f"Study {d.get('Study ID (Covidence)','?')} · {d.get('Phase') or 'no phase'} · "
+                 f"arm {d.get('Arm No.','?')} · {d.get('Lead Author') or 'no author'} · "
+                 f"saved {d.get('Saved at','')}")
+        drafts[label] = ''.join(d.get(c, '') for c in DRAFT_JSON_COLS)
+    return drafts
+
+
+def delete_draft(book, key):
+    try:
+        ws = book.worksheet(DRAFTS_TAB)
+    except gspread.WorksheetNotFound:
+        return
+    index = draft_row_index(ws, key)
+    if index:
+        ws.delete_rows(index)
+
+
+def load_draft():
+    """Button callback: runs before the widgets are drawn, so their values can be set."""
+    label = st.session_state.get('draft_pick')
+    text = (st.session_state.get('_draft_list') or {}).get(label)
+    if not text:
+        st.session_state['_draft_msg'] = ('error', 'Select a draft first.')
+        return
+    try:
+        data = json.loads(text)
+    except ValueError:
+        st.session_state['_draft_msg'] = ('error', 'This draft could not be read. Nothing on screen was changed.')
+        return
+    if data.get('version') != VERSION:
+        st.session_state['_draft_msg'] = ('error',
+            f"This draft was saved with form v{data.get('version')}, not v{VERSION}; its options may "
+            'not match. Nothing on screen was changed.')
+        return
+    for key in list(st.session_state):
+        del st.session_state[key]
+    for key, value in data['state'].items():
+        st.session_state[key] = restore_value(key, value)
+    st.session_state['_draft_msg'] = ('success', f'Draft loaded: {label}. Check each tab, then continue.')
+
+
+def draft_sidebar(book):
+    with st.sidebar:
+        st.header('Draft')
+        st.caption('Save an unfinished arm and resume it later. Drafts are stored in the '
+                   f"'{DRAFTS_TAB}' tab only; they are not submissions and are not validated.")
+        if st.button('💾 Save draft', key='save_draft', disabled=bool(st.session_state.get('_saved'))):
+            try:
+                outcome = save_draft(book, snapshot_state(st.session_state))
+                st.success('Draft saved.' if outcome == 'created'
+                           else 'Draft updated (previous draft for this study/phase/arm replaced).')
+            except Exception as exc:
+                st.error('Draft not saved: ' + str(exc))
+        message = st.session_state.pop('_draft_msg', None)
+        if message:
+            (st.success if message[0] == 'success' else st.error)(message[1])
+        st.markdown('---')
+        if st.button('Find my saved drafts', key='find_drafts'):
+            reviewer = st.session_state.get('reviewer')
+            if not reviewer:
+                st.error('Select Reviewer (Tab 1) first.')
+            else:
+                try:
+                    st.session_state['_draft_list'] = list_drafts(book, reviewer)
+                except Exception as exc:
+                    st.error('Could not read drafts: ' + str(exc))
+        drafts = st.session_state.get('_draft_list')
+        if drafts is not None:
+            if not drafts:
+                st.caption('No saved drafts for this reviewer.')
+            else:
+                st.selectbox('Saved drafts', list(drafts), key='draft_pick')
+                st.button('Load selected draft', key='load_draft_btn', on_click=load_draft)
+                st.caption('Loading replaces everything currently on screen.')
+
+
 @st.cache_resource
 def open_book():
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"],
@@ -509,7 +670,8 @@ def main():
     st.set_page_config(page_title=f'Cognitive Aids NMA Extraction v{VERSION}',layout='wide')
     st.title(f'Cognitive Aids NMA — Data Extraction (v{VERSION})')
     st.info('One arm per submission. In Tab 4, use ＋ Add result for additional selected outcomes or scenarios. '
-            'Keep statistics as reported. Use the same arm numbering as your co-reviewer. Nothing is saved until Submit. '
+            'Keep statistics as reported. Use the same arm numbering as your co-reviewer. Nothing counts as extracted until Submit; '
+            'use **Save draft** in the left sidebar to keep unfinished work. '
             '**Refresh the browser to start a new study.**')
     st.button('Start next arm — clear arm/outcome fields',on_click=clear_draft,args=(False,))
     st.caption('Clears arm-specific and outcome fields and advances Arm No.; study-level fields stay. '
@@ -523,6 +685,7 @@ def main():
     except Exception as exc:
         st.error('Cannot connect to the spreadsheet. Check the existing service-account secrets and access. '+str(exc))
         st.stop()
+    draft_sidebar(book)
     with st.expander('One-time setup: Outcomes tab'):
         st.caption('The existing 87-column tab is preserved. This button creates Outcomes with the required headers, or checks an existing Outcomes tab.')
         if st.button('Create / check Outcomes tab',key='setup_outcomes'):
@@ -1233,6 +1396,10 @@ def main():
             try:
                 result = save_submission(book,worksheet,outcomes_ws,arm_record,outcome_records,submission_id)
                 st.session_state['_saved'] = True
+                try:
+                    delete_draft(book, canonical_key(arm_record))
+                except Exception:
+                    st.warning('Saved, but the matching draft could not be removed from the Drafts tab. Delete that row manually.')
                 st.success(f'Saved {author} ({year}), arm {arm_no}: 1 arm row + {len(outcome_records)} result rows.' if result=='saved' else 'This submission was already saved; no duplicate was added.')
             except Exception as exc:
                 st.error('Save not confirmed: '+str(exc)+'. Keep this page open. Retry the unchanged draft; duplicate-key checks run before saving.')
