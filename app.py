@@ -557,13 +557,19 @@ def draft_sidebar(book):
                 st.selectbox('Saved drafts', list(drafts), key='draft_pick')
                 st.button('Load selected draft', key='load_draft_btn', on_click=load_draft)
                 st.caption('Loading replaces everything currently on screen.')
+        st.markdown('---')
+        # Shows names only, never secret values.
+        st.caption(f'Connected sheet: **{book.title}**')
+        st.caption('Sheet address from: ' + ('Secrets (spreadsheet_url)' if 'spreadsheet_url' in st.secrets
+                                              else 'default in code (original sheet)'))
 
 
 @st.cache_resource
-def open_book():
+def open_book(url):
+    # Cached per URL: changing spreadsheet_url in Secrets opens the new sheet without a reboot.
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"],
             scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
-    return gspread.authorize(creds).open_by_url(st.secrets.get("spreadsheet_url", SHEET_URL))
+    return gspread.authorize(creds).open_by_url(url)
 
 
 def add_result(domain):
@@ -677,7 +683,7 @@ def main():
     st.caption('Clears arm-specific and outcome fields and advances Arm No.; study-level fields stay. '
                '**For a NEW STUDY, refresh the browser (F5 / Cmd+R)** — that clears everything.')
     try:
-        book = open_book()
+        book = open_book(st.secrets.get("spreadsheet_url", SHEET_URL))
         main_title = st.secrets.get('arms_sheet_name','')
         worksheet = book.worksheet(main_title) if main_title else book.sheet1
         if worksheet.title == OUTCOMES_TAB:
