@@ -610,9 +610,21 @@ def clear_draft(new_study=False):
         'total_n','unit_random','unit_analysis','sim_fidelity','scen_complexity','pub_type',
         'author_contact','exp_level','team_compo','team_inter'}
     next_arm = int(st.session_state.get('arm_no',1)) + 1
+    # Deleting a widget's key does not reliably blank it on screen, so arm-level widgets are
+    # reset explicitly: text boxes to '', dropdowns / number boxes to None (their empty state).
+    text_keys = {'author','country','scenario','team_compo','node_rationale','arm_label','aid_name',
+                 'train_duration','pretrain_desc','fidelity_rate','implementation_narrative',
+                 'simpt_desc','coding_uncertainty_log','rob_comments','mersqi_rationale'}
     for key in list(st.session_state):
-        if key not in keep:
-            del st.session_state[key]
+        if not isinstance(key, str) or key in keep:
+            continue
+        if (key.startswith(('_', 'r_', 'not_selected_reason_')) or key.startswith(DRAFT_SKIP_PREFIXES)
+                or key in DRAFT_SKIP_KEYS or key == 'next_arm_btn'):
+            del st.session_state[key]      # internal state, result cards, buttons
+        elif key in text_keys:
+            st.session_state[key] = ''
+        else:
+            st.session_state[key] = None
     if not new_study:
         st.session_state['arm_no'] = next_arm
 
@@ -701,7 +713,8 @@ def main():
             'Keep statistics as reported. Use the same arm numbering as your co-reviewer. Nothing counts as extracted until Submit; '
             'use **Save draft** in the left sidebar to keep unfinished work. '
             '**Refresh the browser to start a new study.**')
-    st.button('Start next arm — clear arm/outcome fields',on_click=clear_draft,args=(False,))
+    st.button('Start next arm — clear arm/outcome fields',on_click=clear_draft,args=(False,),
+              key='next_arm_btn',disabled=not st.session_state.get('_saved'))
     st.caption('Clears arm-specific and outcome fields and advances Arm No.; study-level fields stay. '
                '**For a NEW STUDY, refresh the browser (F5 / Cmd+R)** — that clears everything.')
     try:
