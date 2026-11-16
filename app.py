@@ -244,7 +244,28 @@ def validate_result(r):
             errors.append("Select the outcome direction, including Unclear if necessary.")
         if not has_value(r.get("Instrument")) and not note:
             errors.append("Name the checklist/instrument or explain that it is not reported.")
+    if r.get("Domain") == "Adherence":
+        tier = str(r.get("Adherence measure tier") or "")
+        if not tier:
+            errors.append("Select the Adherence measure tier (use 'Other / unclear' and explain if it does not fit).")
+        if "unclear" in tier.lower() and not note:
+            errors.append("Explain the 'Other / unclear' adherence tier in Comments.")
+        if tier.startswith(("Tier 2", "Tier 3")) and not has_value(r.get("Scale max")) and not note:
+            errors.append("Scale max is required for Tier 2/3; if the paper does not state it, say so in Comments.")
     return errors
+
+
+def validate_crossover(study_type, records, log_text):
+    """Crossover arms need the paired (within-subject) result, or a log line saying where it stands."""
+    if study_type != "Crossover RCT" or not records:
+        return []
+    if any(r.get("Original reporting format") == "effect estimate (CI)" for r in records):
+        return []
+    if any(line.strip().upper().startswith("PAIRED:") for line in str(log_text or "").splitlines()):
+        return []
+    return ["Crossover RCT: add the paired / within-subject result as an 'effect estimate (CI)' result card, "
+            "or add a line to the Coding uncertainty log (Tab 1) starting with 'PAIRED:' — e.g. "
+            "'PAIRED: not reported', 'PAIRED: paired t-test p=0.03 only, Table 2', or 'PAIRED: entered on arm 1'."]
 
 
 def validate_not_selected(gates, reasons):
@@ -638,7 +659,8 @@ def render_result(domain, rid, ordinal):
         if domain == 'Adherence':
             c1,c2 = st.columns(2)
             with c1: pick('Adherence measure tier',['Tier 1 — steps completed/missed (proportion)',
-                'Tier 2 — checklist-based adherence score','Tier 3 — validated technical performance score','Other / unclear'])
+                'Tier 2 — checklist-based adherence score','Tier 3 — validated technical performance score','Other / unclear'],
+                help='Required. Scale max is also required for Tier 2/3 (or explain in Comments if not stated).')
             with c2: pick('Kirkpatrick level',['KP1 Reaction','KP2 Learning','KP3 Behaviour','KP4 Results','N/A / unclear'])
         fmt = pick('Original reporting format',list(FORMATS),help='Keep source values. No median-to-mean or CI-to-SD conversion is done here.')
         primary = [f for f in FORMATS.get(fmt,[]) if f != 'N analyzed']
@@ -754,7 +776,9 @@ def main():
             study_type = st.selectbox(
                 "Study Type ★",
                 ["Parallel RCT", "Crossover RCT", "Cluster RCT", "Other", "Unclear"],
-                help="Record the actual allocation design. Analysis at cluster level does not change a cluster-randomised design into a parallel individual trial. Record allocation and analysis units separately; describe repeated conditions in the log.",
+                help="Record the actual allocation design. Analysis at cluster level does not change a cluster-randomised design into a parallel individual trial. Record allocation and analysis units separately; describe repeated conditions in the log. "
+                     "For a Crossover RCT with results, also record the paired / within-subject result as an 'effect estimate (CI)' card in Tab 4, "
+                     "or write a log line starting with 'PAIRED:' (e.g. 'PAIRED: not reported').",
                 key="study_type",
                 index=None,
                 placeholder="— select —",
@@ -1270,6 +1294,7 @@ def main():
         errors = missing_text + [name+' ('+tab+')' for name,value,tab in CRITICAL_FIELDS if value is None]
         errors += validate_domains(gates,outcome_records,not_selected_reasons)
         errors += validate_not_selected({'Simulated patient outcome':simpt_gate},not_selected_reasons)
+        errors += validate_crossover(study_type, outcome_records, coding_uncertainty_log)
         if context_changed:
             errors.append('Outcome identity changed: restore it or start a new arm/study.')
         unclear_fields = [name for name,value,tab in CRITICAL_FIELDS if isinstance(value,str) and 'unclear' in value.lower()]
