@@ -25,7 +25,7 @@ DRAFT_HEADERS = ["Saved at", "Reviewer", "Study ID (Covidence)", "Phase", "Arm N
                  "Form version", "Lead Author", *DRAFT_JSON_COLS]
 # Buttons and draft controls are not form content and cannot be restored.
 DRAFT_SKIP_KEYS = {"submit_arm", "setup_outcomes", "download_attempt", "save_draft",
-                   "find_drafts", "draft_pick", "load_draft_btn"}
+                   "find_drafts", "draft_pick", "load_draft_btn", "next_arm_btn"}
 DRAFT_SKIP_PREFIXES = ("del_", "add_")
 GATE_NOT_SELECTED = "Reported — not selected for extraction"
 NODE_PENDING = "Pending adjudication"
@@ -541,6 +541,10 @@ def load_draft():
     for key in list(st.session_state):
         del st.session_state[key]
     for key, value in data['state'].items():
+        # Drafts saved before this fix contain 'next_arm_btn'. Button values cannot be set
+        # (StreamlitValueAssignmentNotAllowedError), so skip button/control keys on restore.
+        if key in DRAFT_SKIP_KEYS or key.startswith(DRAFT_SKIP_PREFIXES):
+            continue
         st.session_state[key] = restore_value(key, value)
     st.session_state['_draft_msg'] = ('success', f'Draft loaded: {label}. Check each tab, then continue.')
 
