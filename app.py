@@ -1293,6 +1293,8 @@ def main():
     st.markdown('---')
     st.caption(f'{len(outcome_records)} result row(s) will be linked to this arm. Results are saved in Outcomes; legacy result cells in the 87-column tab stay empty for new submissions.')
     submitted = st.button('💾 Submit Arm Data',key='submit_arm',disabled=bool(st.session_state.get('_saved')))
+    for kind, text in st.session_state.pop('_save_msgs', []):
+        (st.warning if kind == 'warning' else st.success)(text)
     if st.session_state.get('_saved'):
         st.success('Saved. Use Start next arm for the next arm of this study, or refresh the browser to start a new study.')
     if submitted:
@@ -1441,16 +1443,25 @@ def main():
         else:
             st.session_state['_attempt_digest'] = payload_digest
             st.session_state['_attempt_payload'] = payload
+            saved_now = False
             try:
                 result = save_submission(book,worksheet,outcomes_ws,arm_record,outcome_records,submission_id)
                 st.session_state['_saved'] = True
+                messages = []
                 try:
                     delete_draft(book, canonical_key(arm_record))
                 except Exception:
-                    st.warning('Saved, but the matching draft could not be removed from the Drafts tab. Delete that row manually.')
-                st.success(f'Saved {author} ({year}), arm {arm_no}: 1 arm row + {len(outcome_records)} result rows.' if result=='saved' else 'This submission was already saved; no duplicate was added.')
+                    messages.append(('warning', 'Saved, but the matching draft could not be removed from the Drafts tab. Delete that row manually.'))
+                messages.append(('success', f'Saved {author} ({year}), arm {arm_no}: 1 arm row + {len(outcome_records)} result rows.' if result=='saved' else 'This submission was already saved; no duplicate was added.'))
+                st.session_state['_save_msgs'] = messages
+                saved_now = True
             except Exception as exc:
                 st.error('Save not confirmed: '+str(exc)+'. Keep this page open. Retry the unchanged draft; duplicate-key checks run before saving.')
+            # The Start next arm button is drawn at the top of the page, before this save runs,
+            # so it stays disabled until the next rerun. Rerun now so it becomes clickable.
+            # Called outside the try block: st.rerun() works by raising an exception.
+            if saved_now:
+                st.rerun()
     if st.session_state.get('_attempt_payload'):
         st.download_button('Download submitted/attempted data (JSON)',
             json.dumps(st.session_state['_attempt_payload'],ensure_ascii=False,indent=2),
